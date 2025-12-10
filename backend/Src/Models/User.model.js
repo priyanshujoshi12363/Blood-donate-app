@@ -93,6 +93,10 @@ const UserSchema = new mongoose.Schema({
         type: Boolean,
         default: true
     },
+    sessionId: {
+    type: String,
+    default: null
+},
 }, { timestamps: true });
 
 export const User = mongoose.model("User", UserSchema);
