@@ -2,6 +2,9 @@ import express from "express";
 import dotenv from "dotenv";
 import { connectDB } from "./Src/db/index.js";
 import cors from "cors";
+import UserRouter from './Src/Routes/UserRouter.js'
+import LocationRoutes from './Src/Routes/LocationRoutes.js'
+
 dotenv.config({ path: "./.env" });
 
 const app = express();
@@ -11,6 +14,10 @@ const PORT = process.env.PORT
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cors()); 
+
+
+app.use("/user" , UserRouter)
+app.use('/map' , LocationRoutes)
 
 
 const startServer = async () => {

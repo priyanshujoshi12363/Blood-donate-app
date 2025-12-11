@@ -61,23 +61,6 @@ const UserSchema = new mongoose.Schema({
 
         coordinates: {
             type: [Number],
-            required: true
-        },
-
-        formattedAddress: {
-            type: String
-        },
-
-        city: {
-            type: String,
-            required: true,
-            trim: true
-        },
-
-        state: {
-            type: String,
-            required: true,
-            trim: true
         },
     },
     isDonor: {
@@ -97,6 +80,9 @@ const UserSchema = new mongoose.Schema({
     type: String,
     default: null
 },
+   FCMtoken:{
+    type:String
+   }
 }, { timestamps: true });
 
 export const User = mongoose.model("User", UserSchema);

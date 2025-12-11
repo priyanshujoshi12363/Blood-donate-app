@@ -1,5 +1,9 @@
 import { v2 as cloudinary } from 'cloudinary';
 import streamifier from 'streamifier';
+import dotenv from 'dotenv'
+
+
+dotenv.config({path :"./.env"})
 
 cloudinary.config({ 
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME, 
