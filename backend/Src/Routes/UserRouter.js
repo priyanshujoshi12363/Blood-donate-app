@@ -12,7 +12,7 @@ router.post('/login' , Login)
 router.get('/:userId' , verifyToken , getUserData)
 router.patch(
   '/edit/:userId',
-  upload.single('profilePic'), // Multer middleware
+  upload.single('profilePic'), 
   editUserData
 );
 

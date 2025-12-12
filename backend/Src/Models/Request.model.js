@@ -23,15 +23,29 @@ const RequestBloodSchema = new mongoose.Schema({
         type:Number,
         required:true
     },
-    UrgencyLevel:{
-        type:String,
-        enum:["Critical"  , "Urgent" , "Normal"],
-        required:true
-    },
     ContactPhone:{
         type:String,
         required:true
-    } 
+    },
+     donations: [{
+        donor: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User"
+        },
+        unitsDonated: {
+            type: Number,
+            default: 1
+        },
+        donationDate: {
+            type: Date,
+            default: Date.now
+        },
+        status: {
+            type: String,
+            enum: ["scheduled", "completed", "cancelled"],
+            default: "scheduled"
+        }
+    }],
 }, { timestamps: true })
 
 

@@ -4,7 +4,7 @@ import { connectDB } from "./Src/db/index.js";
 import cors from "cors";
 import UserRouter from './Src/Routes/UserRouter.js'
 import LocationRoutes from './Src/Routes/LocationRoutes.js'
-
+import msgRoutes from './Src/Routes/msgRoutes.js'
 dotenv.config({ path: "./.env" });
 
 const app = express();
@@ -18,7 +18,7 @@ app.use(cors());
 
 app.use("/user" , UserRouter)
 app.use('/map' , LocationRoutes)
-
+app.use('/msg' , msgRoutes)
 
 const startServer = async () => {
   try {

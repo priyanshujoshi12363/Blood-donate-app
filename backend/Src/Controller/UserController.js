@@ -524,7 +524,7 @@ export const logout = async (req, res) => {
 
 export const saveFCMToken = async (req, res) => {
   try {
-    const { userId } = req.params;
+    const { userId } = req.body;
     const { FCM } = req.body;
 
     // Validation

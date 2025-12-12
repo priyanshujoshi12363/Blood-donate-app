@@ -1,8 +1,9 @@
 import { Router } from "express";
-import { saveLocation } from "../Controller/locationController.js";
+import { autocompleteGujaratAddress, saveLocation } from "../Controller/locationController.js";
 
 const router = Router();
 
 router.post('/location/:userId' , saveLocation)
+router.post('/autocomplete' , autocompleteGujaratAddress)
 
 export default router;

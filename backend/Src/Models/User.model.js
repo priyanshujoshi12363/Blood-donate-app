@@ -71,11 +71,6 @@ const UserSchema = new mongoose.Schema({
     lastDonationDate: {
         type: Date
     },
-
-    available: {
-        type: Boolean,
-        default: true
-    },
     sessionId: {
     type: String,
     default: null
