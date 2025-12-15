@@ -91,7 +91,6 @@ export const saveLocation = async (req, res) => {
     });
   }
 };
-
 export const locationSearch = async (req, res) => {
   try {
     const { input } = req.query;
@@ -100,36 +99,41 @@ export const locationSearch = async (req, res) => {
       return res.json({ success: true, data: [] });
     }
 
-    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(
-      input
-    )}.json`;
+    // 🔧 Updated URL to Google Places Autocomplete API
+    const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json`;
 
     const response = await axios.get(url, {
       params: {
-        access_token: process.env.MAPBOX_TOKEN,
-        autocomplete: true,
-        limit: 10,
-        country: "IN",
-        language: "en",
-
-        // 🔥 REGION CONTROL
-        bbox: "68.1,15.5,80.9,24.7",   // Gujarat + Maharashtra
-        proximity: "73.0,21.5",        // Western India bias
+        // 🔑 Authentication: Replace with your Google Maps API Key
+        key: process.env.GOOGLE_MAPS_API_KEY,
+        // 📝 Core Search Parameters
+        input: encodeURIComponent(input),
+        types: 'geocode', // Use 'geocode' for addresses, 'establishment' for POIs
+        // 🌍 Region & Location Biasing (for Gujarat/Maharashtra focus)
+        components: 'country:in',
+        location: '21.5,73.0', // Central point for bias
+        radius: 300000, // Bias radius in meters (~Gujarat width)
+        // 🎯 Other Parameters
+        language: 'en',
       },
     });
 
-    const data = response.data.features.map((f) => ({
-      name: f.place_name,
-      lat: f.center[1],
-      lng: f.center[0],
-      type: f.place_type,
+    // 📦 Process the response - structure differs from Mapbox
+    const data = response.data.predictions.map((prediction) => ({
+      name: prediction.description,
+      // Note: Autocomplete does not provide coordinates directly.
+      // You need a separate call to the Geocoding API using the `place_id`.
+      placeId: prediction.place_id,
+      type: prediction.types ? prediction.types[0] : 'unknown',
     }));
 
     res.json({ success: true, data });
+
   } catch (err) {
+    console.error("Google Places API error:", err.response?.data || err.message);
     res.status(500).json({
       success: false,
-      message: "Search failed",
+      message: "Location search failed",
     });
   }
 };
