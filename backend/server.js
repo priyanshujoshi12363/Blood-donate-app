@@ -5,6 +5,7 @@ import cors from "cors";
 import UserRouter from './Src/Routes/UserRouter.js'
 import LocationRoutes from './Src/Routes/LocationRoutes.js'
 import msgRoutes from './Src/Routes/msgRoutes.js'
+import BloodRoutes from './Src/Routes/BloodRoutes.js'
 dotenv.config({ path: "./.env" });
 
 const app = express();
@@ -19,7 +20,7 @@ app.use(cors());
 app.use("/user" , UserRouter)
 app.use('/map' , LocationRoutes)
 app.use('/msg' , msgRoutes)
-
+app.use('/blood' , BloodRoutes)
 const startServer = async () => {
   try {
     await connectDB();

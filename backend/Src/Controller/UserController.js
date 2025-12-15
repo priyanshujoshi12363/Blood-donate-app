@@ -583,3 +583,57 @@ export const saveFCMToken = async (req, res) => {
     });
   }
 };
+
+export const toggleDonorStatus = async (req, res) => {
+  try {
+    const { userId, isDonor } = req.body;
+    
+    // Validate input
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: "User ID is required"
+      });
+    }
+    
+    if (typeof isDonor !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        error: "isDonor must be a boolean (true/false)"
+      });
+    }
+    
+    // Find and update the user
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { $set: { isDonor: isDonor } },
+      { new: true, runValidators: true }
+    ).select('_id username isDonor bloodGroup phone');
+    
+    if (!updatedUser) {
+      return res.status(404).json({
+        success: false,
+        error: "User not found"
+      });
+    }
+    
+  
+    
+    res.status(200).json({
+      success: true,
+      message: `User ${isDonor ? 'marked as' : 'removed as'} donor`,
+      data: {
+        user: updatedUser,
+        status: isDonor ? '✅ Now a donor' : '❌ Not a donor',
+        canReceiveNotifications: isDonor ? 'Yes (with FCM token)' : 'No'
+      }
+    });
+    
+  } catch (error) {
+    console.error("Error toggling donor status:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
