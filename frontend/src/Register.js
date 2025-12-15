@@ -9,13 +9,22 @@ import {
   Platform,
   Alert,
   ActivityIndicator,
-  SafeAreaView,
   ScrollView,
   Image,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Picker } from '@react-native-picker/picker';
 import * as ImagePicker from 'expo-image-picker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+const STORAGE_KEYS = {
+  TOKEN: '@auth_token',
+  SESSION_ID: '@session_id',
+  USER_ID: '@user_id',
+  USER_DATA: '@user_data',
+  IS_LOGGED_IN: '@is_logged_in'
+};
 
 export default function Register({ navigation }) {
   // Form states
@@ -56,7 +65,6 @@ export default function Register({ navigation }) {
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
-        base64: true, // We'll send as base64 for demo
       });
 
       if (!result.canceled) {
@@ -82,7 +90,6 @@ export default function Register({ navigation }) {
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
-        base64: true,
       });
 
       if (!result.canceled) {
@@ -152,59 +159,63 @@ export default function Register({ navigation }) {
     setIsLoading(true);
     
     try {
-      // Prepare registration data
-      const userData = {
-        username: username.trim(),
-        email: email.trim().toLowerCase(),
-        password: password,
-        phone: phone.trim(),
-        age: parseInt(age),
-        bloodGroup,
-        gender
-      };
-
-      // If profile picture is selected, add it to FormData
-      let formData;
+      // Prepare FormData for multipart/form-data
+      const formData = new FormData();
+      
+      // Add all text fields to formData
+      formData.append('username', username.trim());
+      formData.append('email', email.trim().toLowerCase());
+      formData.append('password', password);
+      formData.append('phone', phone.trim());
+      formData.append('age', age);
+      formData.append('bloodGroup', bloodGroup);
+      formData.append('gender', gender);
+      
+      // Add profile picture if selected
       if (profilePic) {
-        formData = new FormData();
+        const filename = profilePic.uri.split('/').pop();
+        const match = /\.(\w+)$/.exec(filename);
+        const type = match ? `image/${match[1]}` : 'image/jpeg';
         
-        // Add all text fields
-        Object.keys(userData).forEach(key => {
-          formData.append(key, userData[key]);
-        });
-        
-        // Add profile picture file
-        formData.append('profilePic', {
+        formData.append('profile_pic', {
           uri: profilePic.uri,
-          type: profilePic.mimeType || 'image/jpeg',
-          name: `profile_${Date.now()}.jpg`,
+          type: type,
+          name: filename
         });
+      } else {
+        // Add empty file field if no picture
+        formData.append('profile_pic', '');
       }
 
-      // Replace with your actual API endpoint
-      const API_URL = 'http://192.168.1.100:5000/api/auth/register';
+      // Your backend API endpoint
+      const API_URL = 'https://blood-donate-app-9c09.onrender.com/user/register';
+      
+      console.log('Sending registration request...');
       
       const response = await fetch(API_URL, {
         method: 'POST',
-        headers: profilePic ? {} : {
-          'Content-Type': 'application/json',
+        headers: {
+          'Accept': 'application/json',
+          // Don't set Content-Type header - let React Native set it with boundary
         },
-        body: profilePic ? formData : JSON.stringify(userData),
+        body: formData,
       });
 
       const data = await response.json();
+      console.log('Registration response:', data);
 
-      if (response.ok) {
+      if (data.success) {
+        // Save all data to AsyncStorage (same as login)
+        await saveRegistrationData(data);
+        
         Alert.alert(
-          'Registration Successful!',
-          'Welcome to Rapid Donor! Your account has been created.',
+          'Registration Successful! 🎉',
+          `Welcome ${data.user.username}! You are now a Rapid Donor member.`,
           [
             {
-              text: 'Continue',
+              text: 'Continue to Home',
               onPress: () => {
-                // Store token if needed
-                // AsyncStorage.setItem('token', data.token);
-                navigation.navigate('Home');
+                navigation.replace('Home');
               }
             }
           ]
@@ -219,12 +230,48 @@ export default function Register({ navigation }) {
     } catch (error) {
       console.error('Registration error:', error);
       Alert.alert(
-        'Network Error',
-        'Unable to connect to server. Please check your connection.',
+        'Registration Error',
+        error.message || 'Unable to connect to server. Please check your connection.',
         [{ text: 'OK' }]
       );
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const saveRegistrationData = async (data) => {
+    try {
+      // Store all data in AsyncStorage (same as login screen)
+      await AsyncStorage.multiSet([
+        [STORAGE_KEYS.TOKEN, data.token],
+        [STORAGE_KEYS.SESSION_ID, data.sessionId],
+        [STORAGE_KEYS.USER_ID, data.user._id],
+        [STORAGE_KEYS.USER_DATA, JSON.stringify(data.user)],
+        [STORAGE_KEYS.IS_LOGGED_IN, 'true']
+      ]);
+
+      // Also store individual fields for easy access
+      const userInfo = {
+        username: data.user.username,
+        email: data.user.email,
+        phone: data.user.phone,
+        bloodGroup: data.user.bloodGroup,
+        gender: data.user.gender,
+        age: data.user.age,
+        isDonor: data.user.isDonor,
+        profilePic: data.user.profilePic?.url || null,
+        location: data.user.location
+      };
+
+      await AsyncStorage.setItem('@user_info', JSON.stringify(userInfo));
+      
+      console.log('Registration data saved to AsyncStorage');
+      console.log('User ID:', data.user._id);
+      console.log('Token saved:', data.token ? 'Yes' : 'No');
+      
+    } catch (error) {
+      console.error('Error saving registration data:', error);
+      throw error;
     }
   };
 
@@ -250,6 +297,36 @@ export default function Register({ navigation }) {
         { text: 'Cancel', style: 'cancel' }
       ]
     );
+  };
+
+  // Debug function to check FormData
+  const debugFormData = () => {
+    const formData = new FormData();
+    formData.append('username', username.trim());
+    formData.append('email', email.trim().toLowerCase());
+    formData.append('password', password);
+    formData.append('phone', phone.trim());
+    formData.append('age', age);
+    formData.append('bloodGroup', bloodGroup);
+    formData.append('gender', gender);
+    
+    if (profilePic) {
+      const filename = profilePic.uri.split('/').pop();
+      formData.append('profile_pic', {
+        uri: profilePic.uri,
+        type: 'image/jpeg',
+        name: filename
+      });
+    }
+    
+    console.log('FormData preview:');
+    console.log('Username:', username);
+    console.log('Email:', email);
+    console.log('Phone:', phone);
+    console.log('Age:', age);
+    console.log('Blood Group:', bloodGroup);
+    console.log('Gender:', gender);
+    console.log('Has Profile Pic:', !!profilePic);
   };
 
   return (
@@ -369,7 +446,7 @@ export default function Register({ navigation }) {
                 />
                 <TextInput
                   style={[styles.input, errors.password && styles.inputError]}
-                  placeholder="Password"
+                  placeholder="Password (min. 6 characters)"
                   placeholderTextColor="#999"
                   value={password}
                   onChangeText={(text) => {
@@ -433,7 +510,7 @@ export default function Register({ navigation }) {
                 />
                 <TextInput
                   style={[styles.input, errors.phone && styles.inputError]}
-                  placeholder="Phone Number"
+                  placeholder="Phone Number (10 digits)"
                   placeholderTextColor="#999"
                   value={phone}
                   onChangeText={(text) => {
@@ -456,7 +533,7 @@ export default function Register({ navigation }) {
                 />
                 <TextInput
                   style={[styles.input, errors.age && styles.inputError]}
-                  placeholder="Age"
+                  placeholder="Age (18-65)"
                   placeholderTextColor="#999"
                   value={age}
                   onChangeText={(text) => {
@@ -517,6 +594,14 @@ export default function Register({ navigation }) {
                 </View>
               </View>
 
+              {/* Debug Button (optional - remove in production) */}
+              {/* <TouchableOpacity
+                style={[styles.debugButton]}
+                onPress={debugFormData}
+              >
+                <Text style={styles.debugButtonText}>Debug Form Data</Text>
+              </TouchableOpacity> */}
+
               {/* Register Button */}
               <TouchableOpacity
                 style={[styles.registerButton, isLoading && styles.registerButtonDisabled]}
@@ -533,7 +618,9 @@ export default function Register({ navigation }) {
                       color="#fff" 
                       style={styles.buttonIcon}
                     />
-                    <Text style={styles.registerButtonText}>Register Now</Text>
+                    <Text style={styles.registerButtonText}>
+                      {isLoading ? 'Registering...' : 'Register Now'}
+                    </Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -733,6 +820,17 @@ const styles = StyleSheet.create({
   picker: {
     flex: 1,
     height: 50,
+  },
+  debugButton: {
+    backgroundColor: '#4CAF50',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 10,
+    alignItems: 'center',
+  },
+  debugButtonText: {
+    color: '#fff',
+    fontSize: 14,
   },
   registerButton: {
     backgroundColor: '#E53935',

@@ -4,7 +4,7 @@ const UserSchema = new mongoose.Schema({
     profilePic: {
         url: {
             type: String,
-            default: "https://res.cloudinary.com/demo/image/upload/v1697123456/default-user.png"
+            default: "https://res.cloudinary.com/djts06fge/image/upload/v1765839851/main_psverh.jpg"
         },
         public_id: {
             type: String,

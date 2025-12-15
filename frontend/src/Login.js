@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,10 +9,20 @@ import {
   Platform,
   Alert,
   ActivityIndicator,
-  SafeAreaView,
-  Image, 
+  Image,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// AsyncStorage keys
+const STORAGE_KEYS = {
+  TOKEN: '@auth_token',
+  SESSION_ID: '@session_id',
+  USER_ID: '@user_id',
+  USER_DATA: '@user_data',
+  IS_LOGGED_IN: '@is_logged_in'
+};
 
 export default function Login({ navigation }) {
   const [emailOrUsername, setEmailOrUsername] = useState('');
@@ -20,6 +30,60 @@ export default function Login({ navigation }) {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState({});
+  const [checkingStorage, setCheckingStorage] = useState(true);
+
+  // Check if user is already logged in on app start
+  useEffect(() => {
+    checkExistingLogin();
+  }, []);
+
+  const checkExistingLogin = async () => {
+    try {
+      const isLoggedIn = await AsyncStorage.getItem(STORAGE_KEYS.IS_LOGGED_IN);
+      const token = await AsyncStorage.getItem(STORAGE_KEYS.TOKEN);
+      const userId = await AsyncStorage.getItem(STORAGE_KEYS.USER_ID);
+
+      // If user is logged in and has valid token, navigate to Home
+      if (isLoggedIn === 'true' && token && userId) {
+        // Optional: Validate token with backend
+        const isValid = await validateToken(token);
+        if (isValid) {
+          navigation.replace('Home');
+        } else {
+          // Token expired, clear storage
+          await clearStorage();
+        }
+      }
+    } catch (error) {
+      console.error('Error checking login status:', error);
+    } finally {
+      setCheckingStorage(false);
+    }
+  };
+
+  const validateToken = async (token) => {
+    try {
+      // You can add a token validation API call here
+      // For now, we'll just check if token exists
+      return !!token;
+    } catch (error) {
+      return false;
+    }
+  };
+
+  const clearStorage = async () => {
+    try {
+      await AsyncStorage.multiRemove([
+        STORAGE_KEYS.TOKEN,
+        STORAGE_KEYS.SESSION_ID,
+        STORAGE_KEYS.USER_ID,
+        STORAGE_KEYS.USER_DATA,
+        STORAGE_KEYS.IS_LOGGED_IN
+      ]);
+    } catch (error) {
+      console.error('Error clearing storage:', error);
+    }
+  };
 
   const validateForm = () => {
     const newErrors = {};
@@ -43,33 +107,107 @@ export default function Login({ navigation }) {
     
     setIsLoading(true);
     
-    setTimeout(() => {
-      setIsLoading(false);
-      
-      const demoCredentials = {
-        email: 'donor@example.com',
-        username: 'bloodhero',
-        password: 'password123'
-      };
-      
-      const isValidEmail = emailOrUsername.toLowerCase() === demoCredentials.email;
-      const isValidUsername = emailOrUsername.toLowerCase() === demoCredentials.username;
-      const isValidPassword = password === demoCredentials.password;
-      
-      if ((isValidEmail || isValidUsername) && isValidPassword) {
+    try {
+      // Call your backend API
+      const response = await fetch('https://blood-donate-app-9c09.onrender.com/user/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          usernameOrEmail: emailOrUsername,
+          password: password
+        })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        // Save all data to AsyncStorage
+        await saveLoginData(data);
+        
         Alert.alert(
           'Login Successful',
-          'Welcome back, Blood Donor!',
-          [{ text: 'OK', onPress: () => navigation.navigate('Home') }]
+          `Welcome back, ${data.user.username}!`,
+          [{ text: 'OK', onPress: () => navigation.replace('Home') }]
         );
       } else {
         Alert.alert(
           'Login Failed',
-          'Invalid credentials. Please try again.',
+          data.message || 'Invalid credentials. Please try again.',
           [{ text: 'OK' }]
         );
       }
-    }, 1500);
+    } catch (error) {
+      console.error('Login error:', error);
+      Alert.alert(
+        'Login Failed',
+        'Network error. Please check your connection.',
+        [{ text: 'OK' }]
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const saveLoginData = async (data) => {
+    try {
+      // Store all data in AsyncStorage
+      await AsyncStorage.multiSet([
+        [STORAGE_KEYS.TOKEN, data.token],
+        [STORAGE_KEYS.SESSION_ID, data.sessionId],
+        [STORAGE_KEYS.USER_ID, data.user._id],
+        [STORAGE_KEYS.USER_DATA, JSON.stringify(data.user)],
+        [STORAGE_KEYS.IS_LOGGED_IN, 'true']
+      ]);
+
+      // Also store individual fields for easy access
+      const userInfo = {
+        username: data.user.username,
+        email: data.user.email,
+        phone: data.user.phone,
+        bloodGroup: data.user.bloodGroup,
+        isDonor: data.user.isDonor,
+        profilePic: data.user.profilePic?.url || null
+      };
+
+      await AsyncStorage.setItem('@user_info', JSON.stringify(userInfo));
+      
+      console.log('Login data saved successfully');
+    } catch (error) {
+      console.error('Error saving login data:', error);
+      throw error;
+    }
+  };
+
+  // Helper function to get stored data (you can use this in other screens)
+  const getStoredData = async () => {
+    try {
+      const [
+        token,
+        sessionId,
+        userId,
+        userData,
+        isLoggedIn
+      ] = await AsyncStorage.multiGet([
+        STORAGE_KEYS.TOKEN,
+        STORAGE_KEYS.SESSION_ID,
+        STORAGE_KEYS.USER_ID,
+        STORAGE_KEYS.USER_DATA,
+        STORAGE_KEYS.IS_LOGGED_IN
+      ]);
+
+      return {
+        token: token[1],
+        sessionId: sessionId[1],
+        userId: userId[1],
+        userData: userData[1] ? JSON.parse(userData[1]) : null,
+        isLoggedIn: isLoggedIn[1] === 'true'
+      };
+    } catch (error) {
+      console.error('Error getting stored data:', error);
+      return null;
+    }
   };
 
   const handleForgotPassword = () => {
@@ -78,12 +216,25 @@ export default function Login({ navigation }) {
       'Please enter your email to reset password.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Send', onPress: () => {
-          Alert.alert('Success', 'Password reset link sent to your email');
-        }},
+        { 
+          text: 'Send', 
+          onPress: () => {
+            Alert.alert('Success', 'Password reset link sent to your email');
+          }
+        },
       ]
     );
   };
+
+  // Show loading while checking storage
+  if (checkingStorage) {
+    return (
+      <SafeAreaView style={[styles.container, styles.centered]}>
+        <ActivityIndicator size="large" color="#E53935" />
+        <Text style={styles.loadingText}>Checking login status...</Text>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -200,7 +351,6 @@ export default function Login({ navigation }) {
               )}
             </TouchableOpacity>
 
-
             {/* Register Link */}
             <View style={styles.registerContainer}>
               <Text style={styles.registerText}>New donor? </Text>
@@ -224,6 +374,51 @@ export default function Login({ navigation }) {
     </SafeAreaView>
   );
 }
+
+// Export the storage helper for use in other components
+export const getAuthData = async () => {
+  try {
+    const [
+      token,
+      userId,
+      userData
+    ] = await AsyncStorage.multiGet([
+      STORAGE_KEYS.TOKEN,
+      STORAGE_KEYS.USER_ID,
+      STORAGE_KEYS.USER_DATA
+    ]);
+
+    return {
+      token: token[1],
+      userId: userId[1],
+      userData: userData[1] ? JSON.parse(userData[1]) : null,
+      isAuthenticated: !!token[1]
+    };
+  } catch (error) {
+    console.error('Error getting auth data:', error);
+    return { isAuthenticated: false };
+  }
+};
+
+// Logout function for other screens
+export const logoutUser = async (navigation) => {
+  try {
+    await AsyncStorage.multiRemove([
+      STORAGE_KEYS.TOKEN,
+      STORAGE_KEYS.SESSION_ID,
+      STORAGE_KEYS.USER_ID,
+      STORAGE_KEYS.USER_DATA,
+      STORAGE_KEYS.IS_LOGGED_IN,
+      '@user_info'
+    ]);
+    
+    if (navigation) {
+      navigation.replace('Login');
+    }
+  } catch (error) {
+    console.error('Logout error:', error);
+  }
+};
 
 const styles = StyleSheet.create({
   container: {
@@ -343,22 +538,6 @@ const styles = StyleSheet.create({
   buttonIcon: {
     marginRight: 10,
   },
-  emergencyButton: {
-    backgroundColor: '#fff',
-    borderWidth: 2,
-    borderColor: '#E53935',
-    borderRadius: 10,
-    padding: 18,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 25,
-  },
-  emergencyButtonText: {
-    color: '#E53935',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
   registerContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -389,5 +568,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
     textAlign: 'center',
+  },
+  centered: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 20,
+    color: '#666',
+    fontSize: 16,
   },
 });
