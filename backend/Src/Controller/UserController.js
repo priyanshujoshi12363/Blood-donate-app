@@ -4,6 +4,9 @@ import { uploadOnCloudinary } from "../Utils/Cloudinary.js";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import mongoose from "mongoose";
+import { RequestBlood } from "../Models/Request.model.js";
+
+
 export const register = async (req, res) => {
     try {
         const {
@@ -634,6 +637,60 @@ export const toggleDonorStatus = async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message
+    });
+  }
+};
+
+
+export const getYourRequest = async (req, res) => {
+  try {
+    // Extract userId from request body
+    const { userId } = req.body;
+    
+    // Validate userId exists
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: "User ID is required",
+      });
+    }
+
+    // Validate userId format (optional but recommended for MongoDB ObjectId)
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid User ID format",
+      });
+    }
+
+    // Convert string to ObjectId for querying
+    const objectId = new mongoose.Types.ObjectId(userId);
+
+    const requests = await RequestBlood.find({
+      RequestPerson: objectId,
+    })
+      .sort({ createdAt: -1 }); // latest first
+
+    return res.status(200).json({
+      success: true,
+      count: requests.length,
+      data: requests,
+    });
+
+  } catch (error) {
+    console.error("Error fetching user requests:", error);
+    
+    // Handle specific mongoose errors
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid User ID format",
+      });
+    }
+    
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
     });
   }
 };

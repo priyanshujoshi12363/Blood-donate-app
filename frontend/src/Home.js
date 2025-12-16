@@ -4,13 +4,12 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Dimensions,
   ScrollView,
   Platform,
   StatusBar,
   Alert,
   ActivityIndicator,
-  Image, // Make sure this is imported
+  Image,
   useWindowDimensions,
 } from "react-native";
 import { Ionicons, MaterialIcons, FontAwesome5 } from "@expo/vector-icons";
@@ -23,36 +22,150 @@ const STORAGE_KEYS = {
   SESSION_ID: '@session_id',
   USER_ID: '@user_id',
   USER_DATA: '@user_data',
-  IS_LOGGED_IN: '@is_logged_in'
+  IS_LOGGED_IN: '@is_logged_in',
+  LAST_DONOR_UPDATE: '@last_donor_update'
 };
 
-export default function HomeScreen({ navigation }) {
+// MOCK REQUESTS DATA
+const MOCK_REQUESTS = [
+  { 
+    id: "1", 
+    name: "Rahul Patil", 
+    blood: "O+", 
+    distance: "3.2 km",
+    urgency: "high",
+    hospital: "City Hospital",
+    time: "2 hours ago"
+  },
+  { 
+    id: "2", 
+    name: "Sneha Joshi", 
+    blood: "A-", 
+    distance: "6.5 km",
+    urgency: "medium",
+    hospital: "Green Valley Medical",
+    time: "4 hours ago"
+  },
+  { 
+    id: "3", 
+    name: "Amit Kulkarni", 
+    blood: "B+", 
+    distance: "9.1 km",
+    urgency: "low",
+    hospital: "Sunrise Hospital",
+    time: "6 hours ago"
+  },
+];
+
+// Add the missing functions that your UI expects
+const getUrgencyColor = (urgency) => {
+  switch(urgency) {
+    case 'high': return '#ff4757';
+    case 'medium': return '#ffa502';
+    case 'low': return '#2ed573';
+    default: return '#2ed573';
+  }
+};
+
+const getUrgencyText = (urgency) => {
+  switch(urgency) {
+    case 'high': return 'Urgent';
+    case 'medium': return 'Moderate';
+    case 'low': return 'Normal';
+    default: return 'Normal';
+  }
+};
+
+export default function Home({ navigation }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("blood");
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [userData, setUserData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isFetchingData, setIsFetchingData] = useState(false);
+  const [nextUpdateDate, setNextUpdateDate] = useState('');
+  const [isUpdatingDonor, setIsUpdatingDonor] = useState(false);
   const { width, height } = useWindowDimensions();
   const isSmallScreen = width < 375;
 
-  // Load user data on component mount
-  useEffect(() => {
-    loadUserData();
-  }, []);
+  // Fetch live user data from API
+  const fetchLiveUserData = async () => {
+    try {
+      setIsFetchingData(true);
+      
+      // Get user ID and token from AsyncStorage
+      const [userId, token] = await Promise.all([
+        AsyncStorage.getItem(STORAGE_KEYS.USER_ID),
+        AsyncStorage.getItem(STORAGE_KEYS.TOKEN)
+      ]);
 
-  const loadUserData = async () => {
+      if (!userId || !token) {
+        console.log('❌ Missing credentials for API call');
+        return null;
+      }
+
+      console.log(`🔄 Fetching live data for user: ${userId}`);
+      
+      // Make API call to get live user data
+      const response = await fetch(`https://blood-donate-app-9c09.onrender.com/user/${userId}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+      });
+
+      const result = await response.json();
+      console.log('📡 Live API response:', result);
+
+      if (result.success) {
+        // Update local storage with fresh data
+        await AsyncStorage.setItem('@user_data', JSON.stringify(result.data));
+        return result.data;
+      } else {
+        console.log('❌ API error:', result.message);
+        return null;
+      }
+      
+    } catch (error) {
+      console.error('❌ Error fetching live data:', error);
+      return null;
+    } finally {
+      setIsFetchingData(false);
+    }
+  };
+
+  // Load user data - tries live API first, falls back to local storage
+  const loadUserData = async (forceRefresh = false) => {
     try {
       setIsLoading(true);
-      const userDataStr = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
-      console.log('Raw user data from storage:', userDataStr);
       
-      if (userDataStr) {
-        const parsedData = JSON.parse(userDataStr);
-        console.log('Parsed user data:', parsedData);
-        setUserData(parsedData);
+      let userData = null;
+      
+      // Try to fetch live data first
+      const liveData = await fetchLiveUserData();
+      
+      if (liveData) {
+        // Use live data from API
+        userData = liveData;
+        console.log('✅ Using live API data');
       } else {
-        console.warn('No user data found in AsyncStorage');
-        // If no user data, redirect to login
+        // Fall back to local storage
+        const userDataStr = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
+        if (userDataStr) {
+          userData = JSON.parse(userDataStr);
+          console.log('📂 Using local storage data (fallback)');
+        } else {
+          console.warn('❌ No user data found anywhere');
+        }
+      }
+      
+      if (userData) {
+        setUserData(userData);
+        
+        // Check if we need to update donor status
+        await checkAndUpdateDonorStatus(userData._id);
+      } else {
         Alert.alert(
           "Session Expired",
           "Please login again",
@@ -71,86 +184,200 @@ export default function HomeScreen({ navigation }) {
     }
   };
 
-  // Get username from stored data
+  // AUTO DONOR STATUS UPDATE FUNCTION
+  const checkAndUpdateDonorStatus = async (userId) => {
+    try {
+      console.log('🔍 Checking donor status update...');
+      
+      // Get token
+      const token = await AsyncStorage.getItem(STORAGE_KEYS.TOKEN);
+
+      if (!userId || !token) {
+        console.log('❌ Missing credentials for donor update');
+        return false;
+      }
+
+      // Check last update time
+      const lastUpdate = await AsyncStorage.getItem(STORAGE_KEYS.LAST_DONOR_UPDATE);
+      const now = new Date();
+      
+      // If never updated before, set to 30 days ago to trigger first update
+      const lastUpdateDate = lastUpdate ? new Date(lastUpdate) : new Date(now.getTime() - 31 * 24 * 60 * 60 * 1000);
+      
+      // Calculate days difference
+      const timeDiff = now.getTime() - lastUpdateDate.getTime();
+      const daysDiff = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
+      
+      console.log(`📅 Days since last update: ${daysDiff}`);
+
+      // Calculate next update date for display
+      const nextUpdate = new Date(lastUpdateDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+      setNextUpdateDate(nextUpdate.toDateString());
+
+      // Only update if 30 days or more have passed
+      if (daysDiff >= 30) {
+        console.log('🔄 30 days passed, updating donor status...');
+        
+        const response = await fetch('https://blood-donate-app-9c09.onrender.com/user/isdonor', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            userId: userId,
+            isDonor: true
+          })
+        });
+
+        const data = await response.json();
+        
+        if (data.success) {
+          console.log('✅ Donor status updated successfully');
+          
+          // Save update timestamp
+          await AsyncStorage.setItem(STORAGE_KEYS.LAST_DONOR_UPDATE, now.toISOString());
+          
+          // Refresh user data after update
+          await loadUserData(true);
+          
+          Alert.alert("Success", "Your donor status has been automatically updated!");
+        } else {
+          console.log('❌ API response error:', data.message);
+        }
+        
+        return true;
+      } else {
+        const daysRemaining = 30 - daysDiff;
+        console.log(`⏰ Next update in ${daysRemaining} days`);
+        return false;
+      }
+      
+    } catch (error) {
+      console.error('❌ Error updating donor status:', error);
+      return false;
+    }
+  };
+
+  // Force update donor status manually
+  const handleForceUpdateDonor = async () => {
+    setMenuOpen(false);
+    
+    Alert.alert(
+      "Update Donor Status",
+      "Do you want to update your donor status to 'Donor' now?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Update Now",
+          onPress: async () => {
+            try {
+              setIsUpdatingDonor(true);
+              
+              const [userId, token] = await Promise.all([
+                AsyncStorage.getItem(STORAGE_KEYS.USER_ID),
+                AsyncStorage.getItem(STORAGE_KEYS.TOKEN)
+              ]);
+
+              if (!userId || !token) {
+                Alert.alert("Error", "Please login again");
+                return;
+              }
+
+              console.log('🔄 Force updating donor status...');
+              
+              const response = await fetch('https://blood-donate-app-9c09.onrender.com/user/isdonor', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                  userId: userId,
+                  isDonor: true
+                })
+              });
+
+              const data = await response.json();
+              
+              if (data.success) {
+                console.log('✅ Force update successful');
+                
+                // Save update timestamp
+                await AsyncStorage.setItem(STORAGE_KEYS.LAST_DONOR_UPDATE, new Date().toISOString());
+                
+                // Refresh user data
+                await loadUserData(true);
+                
+                Alert.alert("Success", "Your donor status has been updated!");
+                
+                // Update next update date
+                const nextUpdate = new Date(new Date().getTime() + 30 * 24 * 60 * 60 * 1000);
+                setNextUpdateDate(nextUpdate.toDateString());
+              } else {
+                Alert.alert("Error", data.message || "Failed to update donor status");
+              }
+              
+            } catch (error) {
+              console.error('Force update error:', error);
+              Alert.alert("Error", "Failed to update donor status");
+            } finally {
+              setIsUpdatingDonor(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  // Refresh user data manually
+  const handleRefreshData = async () => {
+    setMenuOpen(false);
+    await loadUserData(true);
+  };
+
+  // Load user data on component mount
+  useEffect(() => {
+    loadUserData();
+  }, []);
+
+  // Get user data helper functions
   const getUsername = () => {
-    if (userData && userData.username) {
-      return userData.username;
-    }
-    return "User";
+    return userData?.username || "User";
   };
 
-  // Get blood group from stored data
   const getBloodGroup = () => {
-    if (userData && userData.bloodGroup) {
-      return userData.bloodGroup;
-    }
-    return "Unknown";
+    return userData?.bloodGroup || "Unknown";
   };
 
-  // Get profile picture URL
   const getProfilePicUrl = () => {
-    if (userData && userData.profilePic && userData.profilePic.url) {
-      return userData.profilePic.url;
-    }
-    return null;
+    return userData?.profilePic?.url || null;
   };
 
-  // Get age from stored data
   const getAge = () => {
-    if (userData && userData.age) {
-      return userData.age;
-    }
-    return "";
+    return userData?.age || "";
   };
 
-  // Get gender from stored data
   const getGender = () => {
-    if (userData && userData.gender) {
+    if (userData?.gender) {
       return userData.gender.charAt(0).toUpperCase() + userData.gender.slice(1);
     }
     return "";
   };
 
-  // Get email from stored data
   const getEmail = () => {
-    if (userData && userData.email) {
-      return userData.email;
-    }
-    return "";
+    return userData?.email || "";
   };
 
-  // Get phone from stored data
   const getPhone = () => {
-    if (userData && userData.phone) {
-      return userData.phone;
-    }
-    return "";
+    return userData?.phone || "";
   };
 
-  // Get donor status
-  const getDonorStatus = () => {
-    if (userData && userData.isDonor !== undefined) {
-      return userData.isDonor ? "Registered Donor" : "Not Registered as Donor";
+  const getDonorStatusText = () => {
+    if (userData?.isDonor) {
+      return "✅ Registered Donor";
     }
-    return "Unknown";
-  };
-
-  const getUrgencyColor = (urgency) => {
-    switch(urgency) {
-      case 'high': return '#ff4757';
-      case 'medium': return '#ffa502';
-      case 'low': return '#2ed573';
-      default: return '#2ed573';
-    }
-  };
-
-  const getUrgencyText = (urgency) => {
-    switch(urgency) {
-      case 'high': return 'Urgent';
-      case 'medium': return 'Moderate';
-      case 'low': return 'Normal';
-      default: return 'Normal';
-    }
+    return "❌ Not a Donor";
   };
 
   // Logout function
@@ -169,29 +396,24 @@ export default function HomeScreen({ navigation }) {
             try {
               setIsLoggingOut(true);
               
-              // Get user ID from AsyncStorage
               const userId = await AsyncStorage.getItem(STORAGE_KEYS.USER_ID);
               
               if (userId) {
-                // Call logout API
-                const response = await fetch(`https://blood-donate-app-9c09.onrender.com/user/logout/${userId}`, {
+                await fetch(`https://blood-donate-app-9c09.onrender.com/user/logout/${userId}`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                 });
-                
-                const data = await response.json();
-                console.log('Logout API response:', data);
               }
               
               // Clear AsyncStorage
-              await clearStorage();
+              await AsyncStorage.clear();
               
               // Navigate to Login
               navigation.replace('Login');
               
             } catch (error) {
               console.error('Logout error:', error);
-              await clearStorage();
+              await AsyncStorage.clear();
               navigation.replace('Login');
             } finally {
               setIsLoggingOut(false);
@@ -202,23 +424,7 @@ export default function HomeScreen({ navigation }) {
     );
   };
 
-  const clearStorage = async () => {
-    try {
-      await AsyncStorage.multiRemove([
-        STORAGE_KEYS.TOKEN,
-        STORAGE_KEYS.SESSION_ID,
-        STORAGE_KEYS.USER_ID,
-        STORAGE_KEYS.USER_DATA,
-        STORAGE_KEYS.IS_LOGGED_IN,
-        '@user_info'
-      ]);
-      console.log('AsyncStorage cleared');
-    } catch (error) {
-      console.error('Error clearing AsyncStorage:', error);
-    }
-  };
-
-  // Responsive font sizes
+  // Responsive values
   const responsiveFont = {
     small: isSmallScreen ? 10 : 12,
     medium: isSmallScreen ? 12 : 14,
@@ -227,20 +433,18 @@ export default function HomeScreen({ navigation }) {
     xxlarge: isSmallScreen ? 20 : 24,
   };
 
-  // Responsive padding
   const responsivePadding = {
     horizontal: isSmallScreen ? 16 : 20,
     vertical: isSmallScreen ? 8 : 12,
   };
 
-  // Responsive icon sizes
   const iconSize = {
     small: isSmallScreen ? 16 : 20,
     medium: isSmallScreen ? 20 : 24,
     large: isSmallScreen ? 24 : 28,
   };
 
-  // Show loading screen while fetching data
+  // Show loading screen
   if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
@@ -250,27 +454,11 @@ export default function HomeScreen({ navigation }) {
     );
   }
 
-  // If no user data, show error
-  if (!userData) {
-    return (
-      <View style={styles.errorContainer}>
-        <Ionicons name="warning" size={60} color="#ff4757" />
-        <Text style={styles.errorText}>Failed to load user data</Text>
-        <TouchableOpacity 
-          style={styles.retryButton}
-          onPress={loadUserData}
-        >
-          <Text style={styles.retryButtonText}>Retry</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
   return (
     <View style={styles.container}>
       <StatusBar backgroundColor="#d32f2f" barStyle="light-content" />
       
-      {/* HEADER WITH APP NAME */}
+      {/* HEADER */}
       <SafeAreaView style={styles.headerSafeArea}>
         <View style={[styles.header, { paddingHorizontal: responsivePadding.horizontal }]}>
           <View>
@@ -279,6 +467,7 @@ export default function HomeScreen({ navigation }) {
               Hi, {getUsername()} 👋
             </Text>
           </View>
+          
           <TouchableOpacity 
             style={styles.menuButton}
             onPress={() => setMenuOpen(!menuOpen)}
@@ -286,14 +475,16 @@ export default function HomeScreen({ navigation }) {
             <MaterialIcons name="more-vert" size={iconSize.large} color="#fff" />
           </TouchableOpacity>
           
-               {menuOpen && (
+          {/* THREE DOT MENU */}
+          {menuOpen && (
             <View style={[styles.menuBox, { top: height * 0.08 }]}>
+        
+
+              
+              {/* Logout Button */}
               <TouchableOpacity 
                 style={[styles.menuItem, styles.logoutItem]}
-                onPress={() => {
-                  setMenuOpen(false);
-                  handleLogout();
-                }}
+                onPress={handleLogout}
                 disabled={isLoggingOut}
               >
                 {isLoggingOut ? (
@@ -301,12 +492,7 @@ export default function HomeScreen({ navigation }) {
                 ) : (
                   <Ionicons name="log-out-outline" size={iconSize.small} color="#ff4757" />
                 )}
-                <Text style={[
-                  styles.menuText, 
-                  styles.logoutText, 
-                  { fontSize: isSmallScreen ? 12 : 14 },
-                  isLoggingOut && { opacity: 0.7 }
-                ]}>
+                <Text style={[styles.menuText, styles.logoutText, { fontSize: responsiveFont.medium }]}>
                   {isLoggingOut ? 'Logging out...' : 'Logout'}
                 </Text>
               </TouchableOpacity>
@@ -332,18 +518,19 @@ export default function HomeScreen({ navigation }) {
                 style={[
                   styles.profileImage,
                   { 
-                    width: isSmallScreen ? 60 : 70,
-                    height: isSmallScreen ? 60 : 70,
+                    width: isSmallScreen ? 70 : 80,
+                    height: isSmallScreen ? 70 : 80,
                     borderRadius: 35,
                   }
                 ]}
+                resizeMode="cover"
               />
             ) : (
               <View style={[
                 styles.profilePlaceholder,
                 { 
-                  width: isSmallScreen ? 60 : 70,
-                  height: isSmallScreen ? 60 : 70,
+                  width: isSmallScreen ? 70 : 80,
+                  height: isSmallScreen ? 70 : 80,
                   borderRadius: 35,
                 }
               ]}>
@@ -380,22 +567,39 @@ export default function HomeScreen({ navigation }) {
                   {getPhone()}
                 </Text>
               </View>
-              <View style={styles.donorStatusContainer}>
-                <Ionicons 
-                  name={userData.isDonor ? "checkmark-circle" : "close-circle"} 
-                  size={iconSize.small} 
-                  color={userData.isDonor ? "#2e7d32" : "#757575"} 
-                />
-                <Text style={[
-                  styles.donorStatusText, 
-                  { fontSize: responsiveFont.small },
-                  { color: userData.isDonor ? "#2e7d32" : "#757575" }
-                ]}>
-                  {getDonorStatus()}
+              
+              {/* DONOR STATUS SECTION */}
+              <View style={styles.donorStatusSection}>
+                <View style={styles.donorStatusRow}>
+                  <Text style={[styles.donorStatusLabel, { fontSize: responsiveFont.small }]}>
+                    Donor Status:
+                  </Text>
+                  <Text style={[
+                    styles.donorStatusValue, 
+                    { fontSize: responsiveFont.small },
+                    userData?.isDonor ? styles.donorActive : styles.donorInactive
+                  ]}>
+                    {getDonorStatusText()}
+                  </Text>
+                </View>
+                
+                <Text style={[styles.dataSourceText, { fontSize: responsiveFont.small - 1 }]}>
+                  📡 Live data from server
                 </Text>
+                
+                {nextUpdateDate && (
+                  <View style={styles.nextUpdateRow}>
+                    <Ionicons name="calendar-outline" size={iconSize.small} color="#666" />
+                    <Text style={[styles.nextUpdateText, { fontSize: responsiveFont.small - 1 }]}>
+                      Next auto-update: {nextUpdateDate}
+                    </Text>
+                  </View>
+                )}
               </View>
             </View>
           </View>
+          
+          {/* PROFILE STATS */}
           <View style={styles.profileStats}>
             <View style={styles.statItem}>
               <Text style={[styles.statValue, { fontSize: responsiveFont.xlarge }]}>0</Text>
@@ -414,13 +618,12 @@ export default function HomeScreen({ navigation }) {
           </View>
         </View>
 
-        {/* Rest of your code remains the same... */}
         {/* EMERGENCY BUTTON */}
         <TouchableOpacity 
           style={[styles.emergencyBtn, { marginHorizontal: responsivePadding.horizontal }]}
           onPress={() => {
             // Navigate to emergency request screen
-            // navigation.navigate('EmergencyRequest');
+            navigation.navigate('Request');
           }}
         >
           <View style={styles.emergencyIconContainer}>
@@ -433,110 +636,108 @@ export default function HomeScreen({ navigation }) {
           <Ionicons name="arrow-forward" size={iconSize.medium} color="#fff" />
         </TouchableOpacity>
 
-        {/* Rest of your existing code... */}
-        {/* Keep all your existing MOCK_REQUESTS, quick actions, etc. */}
-        
-      </ScrollView>
-
-      {/* BOTTOM NAV BAR */}
-      <SafeAreaView style={styles.bottomNavSafeArea}>
-        <View style={[styles.bottomNav, { paddingBottom: Platform.OS === 'ios' ? height * 0.02 : 0 }]}>
-          {/* Keep your existing bottom nav */}
+        {/* QUICK ACTIONS */}
+        <Text style={[styles.sectionTitle, { 
+          fontSize: responsiveFont.large,
+          marginHorizontal: responsivePadding.horizontal,
+          marginTop: responsivePadding.vertical * 2
+        }]}>
+          Quick Actions
+        </Text>
+        <View style={[styles.quickActions, { marginHorizontal: responsivePadding.horizontal }]}>
+          <TouchableOpacity style={styles.actionItem}>
+            <View style={[styles.actionIcon, { 
+              width: isSmallScreen ? 50 : 60,
+              height: isSmallScreen ? 50 : 60,
+              backgroundColor: '#e3f2fd' 
+            }]}>
+              <Ionicons name="search" size={iconSize.medium} color="#1976d2" />
+            </View>
+            <Text style={[styles.actionText, { fontSize: responsiveFont.small }]}>Find Donors</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.actionItem}>
+            <View style={[styles.actionIcon, { 
+              width: isSmallScreen ? 50 : 60,
+              height: isSmallScreen ? 50 : 60,
+              backgroundColor: '#f3e5f5' 
+            }]}>
+              <MaterialIcons name="bloodtype" size={iconSize.medium} color="#7b1fa2" />
+            </View>
+            <Text style={[styles.actionText, { fontSize: responsiveFont.small }]}>Blood Info</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.actionItem}>
+            <View style={[styles.actionIcon, { 
+              width: isSmallScreen ? 50 : 60,
+              height: isSmallScreen ? 50 : 60,
+              backgroundColor: '#e8f5e8' 
+            }]}>
+              <FontAwesome5 name="hand-holding-heart" size={isSmallScreen ? 18 : 22} color="#2e7d32" />
+            </View>
+            <Text style={[styles.actionText, { fontSize: responsiveFont.small }]}>Eligibility</Text>
+          </TouchableOpacity>
         </View>
-      </SafeAreaView>
+
+        {/* NEARBY REQUESTS */}
+        <View style={[styles.sectionHeader, { marginHorizontal: responsivePadding.horizontal }]}>
+          <Text style={[styles.sectionTitle, { 
+            fontSize: responsiveFont.large,
+            marginTop: responsivePadding.vertical * 2,
+            marginBottom: responsivePadding.vertical
+          }]}>
+            Blood Requests Nearby
+          </Text>
+          <TouchableOpacity>
+            <Text style={[styles.seeAllText, { fontSize: responsiveFont.small }]}>See All</Text>
+          </TouchableOpacity>
+        </View>
+
+        {MOCK_REQUESTS.map((item) => (
+          <View key={item.id} style={[styles.requestCard, { marginHorizontal: responsivePadding.horizontal }]}>
+            <View style={styles.requestHeader}>
+              <View style={styles.bloodGroupBadge}>
+                <Text style={[styles.bloodGroupText, { fontSize: responsiveFont.small }]}>{item.blood}</Text>
+              </View>
+              <View style={[styles.urgencyBadge, { backgroundColor: getUrgencyColor(item.urgency) }]}>
+                <Text style={[styles.urgencyText, { fontSize: responsiveFont.small - 2 }]}>
+                  {getUrgencyText(item.urgency)}
+                </Text>
+              </View>
+            </View>
+            
+            <Text style={[styles.requestName, { fontSize: responsiveFont.medium }]}>{item.name}</Text>
+            
+            <View style={styles.requestDetails}>
+              <View style={styles.detailItem}>
+                <Ionicons name="location-outline" size={iconSize.small} color="#666" />
+                <Text style={[styles.detailText, { fontSize: responsiveFont.small }]}>{item.distance} away</Text>
+              </View>
+              <View style={styles.detailItem}>
+                <Ionicons name="medical-outline" size={iconSize.small} color="#666" />
+                <Text style={[styles.detailText, { fontSize: responsiveFont.small }]}>{item.hospital}</Text>
+              </View>
+              <View style={styles.detailItem}>
+                <Ionicons name="time-outline" size={iconSize.small} color="#666" />
+                <Text style={[styles.detailText, { fontSize: responsiveFont.small }]}>{item.time}</Text>
+              </View>
+            </View>
+            
+            <View style={styles.requestActions}>
+              <TouchableOpacity style={styles.chatButton}>
+                <Ionicons name="chatbubble-outline" size={iconSize.small} color="#1976d2" />
+                <Text style={[styles.chatButtonText, { fontSize: responsiveFont.small }]}>Chat</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.donateBtn}>
+                <Text style={[styles.donateText, { fontSize: responsiveFont.small }]}>Donate Now</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ))}
+      </ScrollView>
     </View>
   );
 }
 
-// Add these new styles
 const styles = StyleSheet.create({
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f8f9fa',
-  },
-  loadingText: {
-    marginTop: 20,
-    color: '#666',
-    fontSize: 16,
-  },
-  errorContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f8f9fa',
-    padding: 20,
-  },
-  errorText: {
-    marginTop: 20,
-    color: '#ff4757',
-    fontSize: 16,
-    textAlign: 'center',
-  },
-  retryButton: {
-    marginTop: 20,
-    backgroundColor: '#d32f2f',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 10,
-  },
-  retryButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  profileImage: {
-    borderWidth: 2,
-    borderColor: '#d32f2f',
-  },
-  profilePlaceholder: {
-    backgroundColor: '#ffebee',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#d32f2f',
-  },
-  userDetailsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginTop: 4,
-    marginBottom: 2,
-  },
-  detailBadge: {
-    backgroundColor: '#f0f0f0',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 8,
-    marginRight: 6,
-    marginBottom: 4,
-  },
-  detailBadgeText: {
-    color: '#666',
-    fontWeight: '500',
-  },
-  bloodBadge: {
-    backgroundColor: '#ffebee',
-  },
-  bloodBadgeText: {
-    color: '#d32f2f',
-    fontWeight: '700',
-  },
-  profileEmail: {
-    color: '#666',
-    marginBottom: 4,
-  },
-  donorStatusContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 4,
-  },
-  donorStatusText: {
-    marginLeft: 4,
-    fontWeight: '500',
-  },
-  
-  // Keep all your existing styles below...
   container: {
     flex: 1,
     backgroundColor: "#f8f9fa",
@@ -547,7 +748,7 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: "#d32f2f",
     paddingTop: Platform.OS === 'android' ? 10 : 0,
-    paddingBottom: 20,
+    paddingBottom: 10,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
@@ -610,6 +811,42 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingTop: 10,
   },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+  },
+  loadingText: {
+    marginTop: 20,
+    color: '#666',
+    fontSize: 16,
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+    padding: 20,
+  },
+  errorText: {
+    marginTop: 20,
+    color: '#ff4757',
+    fontSize: 16,
+    textAlign: 'center',
+  },
+  retryButton: {
+    marginTop: 20,
+    backgroundColor: '#d32f2f',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  retryButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
   profileCard: {
     backgroundColor: "#fff",
     padding: 16,
@@ -625,6 +862,17 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
   },
+  profileImage: {
+    borderWidth: 2,
+    borderColor: '#d32f2f',
+  },
+  profilePlaceholder: {
+    backgroundColor: '#ffebee',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#d32f2f',
+  },
   profileInfo: {
     marginLeft: 16,
     flex: 1,
@@ -633,13 +881,34 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#333",
   },
-  profileBlood: {
-    color: "#666",
-    marginTop: 2,
+  userDetailsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 4,
+    marginBottom: 6,
   },
-  bloodGroup: {
-    color: "#d32f2f",
-    fontWeight: "700",
+  detailBadge: {
+    backgroundColor: '#f0f0f0',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    marginRight: 6,
+    marginBottom: 4,
+  },
+  detailBadgeText: {
+    color: '#666',
+    fontWeight: '500',
+  },
+  bloodBadge: {
+    backgroundColor: '#ffebee',
+  },
+  bloodBadgeText: {
+    color: '#d32f2f',
+    fontWeight: '700',
+  },
+  profileEmail: {
+    color: '#666',
+    marginBottom: 2,
   },
   locationContainer: {
     flexDirection: "row",
@@ -648,6 +917,64 @@ const styles = StyleSheet.create({
   },
   locationText: {
     color: "#666",
+    marginLeft: 4,
+  },
+  donorStatusSection: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+  },
+  donorStatusRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  donorStatusLabel: {
+    color: '#666',
+    fontWeight: '500',
+  },
+  donorStatusValue: {
+    fontWeight: '600',
+  },
+  donorActive: {
+    color: '#2e7d32',
+  },
+  donorInactive: {
+    color: '#d32f2f',
+  },
+  dataSourceText: {
+    color: '#666',
+    fontStyle: 'italic',
+    marginTop: 2,
+    marginBottom: 4,
+  },
+  nextUpdateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  nextUpdateText: {
+    color: '#666',
+    marginLeft: 6,
+    fontStyle: 'italic',
+  },
+  updateNowButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f0f7ff',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: '#e3f2fd',
+    marginTop: 4,
+  },
+  updateNowText: {
+    color: '#1976d2',
+    fontWeight: '600',
     marginLeft: 4,
   },
   profileStats: {

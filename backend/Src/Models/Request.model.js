@@ -32,6 +32,22 @@ const RequestBloodSchema = new mongoose.Schema({
         default: () => new Date(Date.now() + 24 * 60 * 60 * 1000), // 48 hours from now
         index: { expires: 0 } 
     },
+    status:{
+        type:String,
+        enum:["Accepted" , "Looking for Blood"]
+    },
+     donations: [
+    {
+      donor: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User"
+      },
+      unitsDonated: {
+        type: Number,
+        default: 1
+      },
+    }
+  ],
 }, { timestamps: true })
 
 RequestBloodSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });

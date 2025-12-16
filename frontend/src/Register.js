@@ -14,7 +14,6 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Picker } from '@react-native-picker/picker';
-import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -26,6 +25,9 @@ const STORAGE_KEYS = {
   IS_LOGGED_IN: '@is_logged_in'
 };
 
+// Default profile picture URL
+const DEFAULT_PROFILE_PIC = 'https://res.cloudinary.com/djts06fge/image/upload/v1765839851/main_psverh.jpg';
+
 export default function Register({ navigation }) {
   // Form states
   const [username, setUsername] = useState('');
@@ -36,7 +38,6 @@ export default function Register({ navigation }) {
   const [age, setAge] = useState('');
   const [bloodGroup, setBloodGroup] = useState('A+');
   const [gender, setGender] = useState('male');
-  const [profilePic, setProfilePic] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -47,59 +48,6 @@ export default function Register({ navigation }) {
   
   // Gender options
   const genders = ["male", "female", "other"];
-
-  // Function to pick profile picture
-  const pickProfilePicture = async () => {
-    try {
-      // Request permissions
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      
-      if (status !== 'granted') {
-        Alert.alert('Permission Required', 'Sorry, we need camera roll permissions to upload profile picture.');
-        return;
-      }
-
-      // Launch image picker
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
-      });
-
-      if (!result.canceled) {
-        setProfilePic(result.assets[0]);
-      }
-    } catch (error) {
-      console.error('Error picking image:', error);
-      Alert.alert('Error', 'Failed to pick image. Please try again.');
-    }
-  };
-
-  // Function to take photo with camera
-  const takePhoto = async () => {
-    try {
-      const { status } = await ImagePicker.requestCameraPermissionsAsync();
-      
-      if (status !== 'granted') {
-        Alert.alert('Permission Required', 'Sorry, we need camera permissions to take a photo.');
-        return;
-      }
-
-      const result = await ImagePicker.launchCameraAsync({
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
-      });
-
-      if (!result.canceled) {
-        setProfilePic(result.assets[0]);
-      }
-    } catch (error) {
-      console.error('Error taking photo:', error);
-      Alert.alert('Error', 'Failed to take photo. Please try again.');
-    }
-  };
 
   const validateForm = () => {
     const newErrors = {};
@@ -159,53 +107,37 @@ export default function Register({ navigation }) {
     setIsLoading(true);
     
     try {
-      // Prepare FormData for multipart/form-data
-      const formData = new FormData();
-      
-      // Add all text fields to formData
-      formData.append('username', username.trim());
-      formData.append('email', email.trim().toLowerCase());
-      formData.append('password', password);
-      formData.append('phone', phone.trim());
-      formData.append('age', age);
-      formData.append('bloodGroup', bloodGroup);
-      formData.append('gender', gender);
-      
-      // Add profile picture if selected
-      if (profilePic) {
-        const filename = profilePic.uri.split('/').pop();
-        const match = /\.(\w+)$/.exec(filename);
-        const type = match ? `image/${match[1]}` : 'image/jpeg';
-        
-        formData.append('profile_pic', {
-          uri: profilePic.uri,
-          type: type,
-          name: filename
-        });
-      } else {
-        // Add empty file field if no picture
-        formData.append('profile_pic', '');
-      }
+      // Prepare user data WITHOUT profile picture field
+      const userData = {
+        username: username.trim(),
+        email: email.trim().toLowerCase(),
+        password: password,
+        phone: phone.trim(),
+        age: parseInt(age),
+        bloodGroup: bloodGroup,
+        gender: gender
+        // DO NOT send profile_pic field - backend will use default
+      };
 
       // Your backend API endpoint
       const API_URL = 'https://blood-donate-app-9c09.onrender.com/user/register';
       
       console.log('Sending registration request...');
+      console.log('User data:', userData);
       
       const response = await fetch(API_URL, {
         method: 'POST',
         headers: {
-          'Accept': 'application/json',
-          // Don't set Content-Type header - let React Native set it with boundary
+          'Content-Type': 'application/json',
         },
-        body: formData,
+        body: JSON.stringify(userData),
       });
 
       const data = await response.json();
       console.log('Registration response:', data);
 
       if (data.success) {
-        // Save all data to AsyncStorage (same as login)
+        // Save all data to AsyncStorage
         await saveRegistrationData(data);
         
         Alert.alert(
@@ -215,7 +147,7 @@ export default function Register({ navigation }) {
             {
               text: 'Continue to Home',
               onPress: () => {
-                navigation.replace('Home');
+                navigation.replace('Main');
               }
             }
           ]
@@ -241,7 +173,7 @@ export default function Register({ navigation }) {
 
   const saveRegistrationData = async (data) => {
     try {
-      // Store all data in AsyncStorage (same as login screen)
+      // Store all data in AsyncStorage
       await AsyncStorage.multiSet([
         [STORAGE_KEYS.TOKEN, data.token],
         [STORAGE_KEYS.SESSION_ID, data.sessionId],
@@ -259,7 +191,7 @@ export default function Register({ navigation }) {
         gender: data.user.gender,
         age: data.user.age,
         isDonor: data.user.isDonor,
-        profilePic: data.user.profilePic?.url || null,
+        profilePic: data.user.profilePic?.url || DEFAULT_PROFILE_PIC, // Use default if none
         location: data.user.location
       };
 
@@ -286,49 +218,6 @@ export default function Register({ navigation }) {
     }
   };
 
-  // Function to show profile picture options
-  const showProfilePicOptions = () => {
-    Alert.alert(
-      'Profile Picture',
-      'Choose an option',
-      [
-        { text: 'Take Photo', onPress: takePhoto },
-        { text: 'Choose from Gallery', onPress: pickProfilePicture },
-        { text: 'Cancel', style: 'cancel' }
-      ]
-    );
-  };
-
-  // Debug function to check FormData
-  const debugFormData = () => {
-    const formData = new FormData();
-    formData.append('username', username.trim());
-    formData.append('email', email.trim().toLowerCase());
-    formData.append('password', password);
-    formData.append('phone', phone.trim());
-    formData.append('age', age);
-    formData.append('bloodGroup', bloodGroup);
-    formData.append('gender', gender);
-    
-    if (profilePic) {
-      const filename = profilePic.uri.split('/').pop();
-      formData.append('profile_pic', {
-        uri: profilePic.uri,
-        type: 'image/jpeg',
-        name: filename
-      });
-    }
-    
-    console.log('FormData preview:');
-    console.log('Username:', username);
-    console.log('Email:', email);
-    console.log('Phone:', phone);
-    console.log('Age:', age);
-    console.log('Blood Group:', bloodGroup);
-    console.log('Gender:', gender);
-    console.log('Has Profile Pic:', !!profilePic);
-  };
-
   return (
     <SafeAreaView style={styles.container}>
       <KeyboardAvoidingView
@@ -351,38 +240,24 @@ export default function Register({ navigation }) {
               <Text style={styles.subtitle}>Be a hero, save lives</Text>
             </View>
 
-            {/* Profile Picture Upload */}
+            {/* Profile Picture Preview (Static - No Upload) */}
             <View style={styles.profileSection}>
-              <Text style={styles.sectionTitle}>Profile Picture (Optional)</Text>
-              <TouchableOpacity 
-                style={styles.profilePicContainer}
-                onPress={showProfilePicOptions}
-              >
-                {profilePic ? (
-                  <Image 
-                    source={{ uri: profilePic.uri }} 
-                    style={styles.profilePic}
-                  />
-                ) : (
-                  <View style={styles.profilePlaceholder}>
-                    <MaterialCommunityIcons 
-                      name="camera-plus" 
-                      size={50} 
-                      color="#666" 
-                    />
-                    <Text style={styles.profilePlaceholderText}>Add Photo</Text>
-                  </View>
-                )}
+              <Text style={styles.sectionTitle}>Default Profile Picture</Text>
+              <View style={styles.profilePicContainer}>
+                <Image 
+                  source={{ uri: DEFAULT_PROFILE_PIC }}
+                  style={styles.defaultProfilePic}
+                />
                 <View style={styles.profilePicOverlay}>
                   <MaterialCommunityIcons 
-                    name="camera" 
+                    name="account" 
                     size={24} 
                     color="#fff" 
                   />
                 </View>
-              </TouchableOpacity>
+              </View>
               <Text style={styles.profileHelpText}>
-                Tap to add a profile picture (Optional)
+                All users get this default profile picture
               </Text>
             </View>
 
@@ -594,14 +469,6 @@ export default function Register({ navigation }) {
                 </View>
               </View>
 
-              {/* Debug Button (optional - remove in production) */}
-              {/* <TouchableOpacity
-                style={[styles.debugButton]}
-                onPress={debugFormData}
-              >
-                <Text style={styles.debugButtonText}>Debug Form Data</Text>
-              </TouchableOpacity> */}
-
               {/* Register Button */}
               <TouchableOpacity
                 style={[styles.registerButton, isLoading && styles.registerButtonDisabled]}
@@ -699,28 +566,12 @@ const styles = StyleSheet.create({
     position: 'relative',
     marginBottom: 10,
   },
-  profilePic: {
+  defaultProfilePic: {
     width: 120,
     height: 120,
     borderRadius: 60,
     borderWidth: 3,
     borderColor: '#E53935',
-  },
-  profilePlaceholder: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: '#f0f0f0',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#ddd',
-    borderStyle: 'dashed',
-  },
-  profilePlaceholderText: {
-    marginTop: 5,
-    color: '#666',
-    fontSize: 14,
   },
   profilePicOverlay: {
     position: 'absolute',
@@ -820,17 +671,6 @@ const styles = StyleSheet.create({
   picker: {
     flex: 1,
     height: 50,
-  },
-  debugButton: {
-    backgroundColor: '#4CAF50',
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 10,
-    alignItems: 'center',
-  },
-  debugButtonText: {
-    color: '#fff',
-    fontSize: 14,
   },
   registerButton: {
     backgroundColor: '#E53935',

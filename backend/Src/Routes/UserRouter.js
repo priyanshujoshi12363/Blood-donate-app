@@ -2,7 +2,7 @@ import { Router } from "express";
 import multer from "multer";
 const storage = multer.diskStorage({});
 export const upload = multer({ storage });
-import { getUserData, Login, register , editUserData, logout, saveFCMToken , toggleDonorStatus} from "../Controller/UserController.js";
+import { getUserData, Login, register , editUserData, logout, saveFCMToken , toggleDonorStatus, getYourRequest} from "../Controller/UserController.js";
 import { verifyToken } from "../Middleware/userauth.js";
 
 const router = Router()
@@ -19,5 +19,6 @@ router.patch(
 router.post('/logout/:userId' , verifyToken, logout)
 router.post('/FCM' , verifyToken , saveFCMToken)
 router.post('/isdonor' , toggleDonorStatus)
+router.post('/blood', getYourRequest)
 
 export default router;

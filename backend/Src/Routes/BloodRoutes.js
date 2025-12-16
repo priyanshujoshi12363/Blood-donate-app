@@ -1,6 +1,6 @@
 import {Router} from "express"
 import { verifyToken } from "../Middleware/userauth.js"
-import { notifyNearbyDonors , getnotification} from "../Controller/BloodController.js"
+import { notifyNearbyDonors , getnotification, AcceptNotification} from "../Controller/BloodController.js"
 
 
 const router = Router()
@@ -8,6 +8,6 @@ const router = Router()
 
 
 router.post('/notify' , verifyToken , notifyNearbyDonors)
-router.get('/notification/:requestId', verifyToken, getnotification);
-
+router.post('/notification', getnotification);
+router.post('/accept/:userId' , AcceptNotification)
 export default router

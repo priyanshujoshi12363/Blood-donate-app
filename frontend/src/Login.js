@@ -48,7 +48,7 @@ export default function Login({ navigation }) {
         // Optional: Validate token with backend
         const isValid = await validateToken(token);
         if (isValid) {
-          navigation.replace('Home');
+          navigation.replace('Main');
         } else {
           // Token expired, clear storage
           await clearStorage();
@@ -129,7 +129,7 @@ export default function Login({ navigation }) {
         Alert.alert(
           'Login Successful',
           `Welcome back, ${data.user.username}!`,
-          [{ text: 'OK', onPress: () => navigation.replace('Home') }]
+          [{ text: 'OK', onPress: () => navigation.replace('Main') }]
         );
       } else {
         Alert.alert(
