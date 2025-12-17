@@ -7,7 +7,7 @@ import { Platform, StatusBar, View } from 'react-native';
 import Login from './src/Login';
 import Register from './src/Register';
 import BottomTabNavigator from './src/BottomNv/BottomNav';
-
+import Request from './src/Request/Request';
 const Stack = createNativeStackNavigator();
 
 export default function App() {
@@ -54,6 +54,7 @@ export default function App() {
             <Stack.Screen name="Login" component={Login} />
             <Stack.Screen name="Register" component={Register} />
             <Stack.Screen name="Main" component={BottomTabNavigator} />
+            <Stack.Screen name='Request' component={Request}/>
           </Stack.Navigator>
         </NavigationContainer>
       </View>

@@ -65,7 +65,7 @@ export default function BottomTabNavigator() {
       />
       
       <Tab.Screen 
-        name="Request" 
+        name="YourRequest" 
         component={YourRequest}
         options={{
           tabBarIcon: ({ focused, color, size }) => (

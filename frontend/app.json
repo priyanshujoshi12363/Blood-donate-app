@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Rapid Donor",
-    "slug": "Rapid Donor",
+    "slug": "Rapid-Donor",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/main.jpeg",
@@ -20,10 +20,17 @@
         "foregroundImage": "./assets/main.jpeg",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "package": "com.priyanshu0ko.RapidDonor"
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "e4675282-f0eb-4967-a86c-7261e2d0c884"
+      }
+    },
+    "owner": "priyanshu0ko"
   }
 }

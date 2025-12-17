@@ -1,6 +1,8 @@
 // controllers/chatController.js
 import { admin , firebaseDB } from "../Utils/firebase.js";
 import { User } from "../Models/User.model.js";
+import mongoose from "mongoose";
+
 export const sendMessage = async (req, res) => {
     try {
         const { receiverId, text } = req.body;
@@ -243,4 +245,43 @@ export const getMyChats = async (req, res) => {
         console.error('Get chats error:', error);
         res.status(500).json({ error: error.message });
     }
+};
+
+
+
+export const getuserdatabyId = async (req, res) => {
+  try {
+    const { userId } = req.params; // or req.body / req.query if you prefer
+
+    // Validate MongoDB ObjectId
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid user ID",
+      });
+    }
+
+    const user = await User.findById(userId).select(
+      "-password -sessionId"
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: user,
+    });
+
+  } catch (error) {
+    console.error("getuserdatabyId error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
 };

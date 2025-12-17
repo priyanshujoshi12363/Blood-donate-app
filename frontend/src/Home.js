@@ -15,6 +15,10 @@ import {
 import { Ionicons, MaterialIcons, FontAwesome5 } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import fcmService from "../fcmService";
+
+
+
 
 // AsyncStorage keys
 const STORAGE_KEYS = {
@@ -89,6 +93,11 @@ export default function Home({ navigation }) {
   const isSmallScreen = width < 375;
 
   // Fetch live user data from API
+
+
+useEffect(() => {
+  fcmService.init();
+}, []);
   const fetchLiveUserData = async () => {
     try {
       setIsFetchingData(true);
