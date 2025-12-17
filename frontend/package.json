@@ -4,8 +4,8 @@
   "main": "index.js",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "web": "expo start --web"
   },
   "dependencies": {
@@ -20,9 +20,12 @@
     "axios": "^1.13.2",
     "eas-cli": "^16.28.0",
     "expo": "~54.0.27",
+    "expo-constants": "~15.2.0",
     "expo-dev-client": "~6.0.20",
+    "expo-device": "~8.0.10",
     "expo-haptics": "~15.0.8",
     "expo-image-picker": "~17.0.10",
+    "expo-notifications": "~0.32.15",
     "expo-status-bar": "~3.0.9",
     "react": "19.1.0",
     "react-native": "0.81.5",

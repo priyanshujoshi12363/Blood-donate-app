@@ -4,16 +4,16 @@ import admin from 'firebase-admin';
 import { User } from '../Models/User.model.js';
 import { RequestBlood } from '../Models/Request.model.js';
 import { firebaseDB as db } from '../Utils/firebase.js';
-import {Donation }from '../Models/donor.model.js'
+import { Donation } from '../Models/donor.model.js'
 // Calculate distance
 const calculateDistance = (lat1, lon1, lat2, lon2) => {
     const R = 6371;
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-              Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
 };
 
@@ -29,7 +29,7 @@ const geocodeAddress = async (address) => {
                 }
             }
         );
-        
+
         if (response.data.results && response.data.results[0]) {
             const { lat, lng } = response.data.results[0].geometry.location;
             return { latitude: lat, longitude: lng };
@@ -57,11 +57,11 @@ const BLOOD_COMPATIBILITY = {
 export const notifyNearbyDonors = async (req, res) => {
     try {
         console.log("🚨 STARTING BLOOD REQUEST...");
-        
+
         // Get user and request data
         const userId = req.user?._id || req.user?.id;
         const { BloodType, description, unitRequired, ContactPhone, HospitalAddress } = req.body;
-        
+
         // Validate
         if (!BloodType || !unitRequired || !ContactPhone || !HospitalAddress) {
             return res.status(400).json({
@@ -69,7 +69,7 @@ export const notifyNearbyDonors = async (req, res) => {
                 error: "Missing required fields"
             });
         }
-        
+
         // Get hospital coordinates
         console.log(`📍 Getting coordinates for: ${HospitalAddress}`);
         const hospitalCoords = await geocodeAddress(HospitalAddress);
@@ -79,79 +79,93 @@ export const notifyNearbyDonors = async (req, res) => {
                 error: "Could not find hospital location"
             });
         }
-        
+
         console.log(`✅ Hospital coordinates: ${hospitalCoords.latitude}, ${hospitalCoords.longitude}`);
-        
+
         // Get compatible blood types
         const compatibleBloodTypes = BLOOD_COMPATIBILITY[BloodType] || [];
         console.log(`🩸 Blood ${BloodType} is compatible with: ${compatibleBloodTypes.join(', ')}`);
-        
-        // ========== FIX 1: GET ALL USERS FROM MONGODB ==========
+
+        // ========== CREATE REQUEST FIRST TO GET _id ==========
+        const bloodRequest = new RequestBlood({
+            RequestPerson: userId,
+            BloodType,
+            description: description || '',
+            unitRequired: parseInt(unitRequired),
+            ContactPhone,
+            HospitalAddress,
+            location: {
+                type: "Point",
+                coordinates: [hospitalCoords.longitude, hospitalCoords.latitude]
+            },
+            expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000), // 48 hours
+            status: 'Looking for Blood',
+            notifiedDonors: [],
+            notificationsSent: 0,
+            failedNotifications: []
+        });
+
+        // Save to get the _id
+        await bloodRequest.save();
+        const requestId = bloodRequest._id.toString();
+
+        console.log(`✅ Request created with ID: ${requestId}`);
+
+        // ========== GET ALL USERS FROM MONGODB ==========
         const allUsers = await User.find({
             isDonor: true, // Must be donor
             FCMtoken: { $exists: true, $ne: null, $ne: "" } // Must have FCM token
         }).select('_id username bloodGroup FCMtoken phone');
-        
+
         console.log(`📊 Found ${allUsers.length} users who are donors and have FCM tokens`);
-        
-        // Log all users for debugging
-        allUsers.forEach(user => {
-            console.log(`👤 ${user.username}: Blood=${user.bloodGroup}, ID=${user._id}`);
-        });
-        
-        // ========== FIX 2: GET ALL LOCATIONS FROM FIREBASE ==========
+
+        // ========== GET ALL LOCATIONS FROM FIREBASE ==========
         const locationsSnapshot = await db.ref('userLocations').once('value');
         const allFirebaseLocations = locationsSnapshot.val() || {};
-        
+
         console.log(`📍 Found ${Object.keys(allFirebaseLocations).length} users in Firebase locations`);
-        
-        // Log Firebase users
-        Object.entries(allFirebaseLocations).forEach(([firebaseId, location]) => {
-            console.log(`🔥 Firebase ID: ${firebaseId}, Location: ${location.latitude}, ${location.longitude}`);
-        });
-        
-        // ========== FIX 3: FIND COMPATIBLE DONORS WITHIN DISTANCE ==========
+
+        // ========== FIND COMPATIBLE DONORS WITHIN DISTANCE ==========
         const MAX_DISTANCE_KM = 10;
         const eligibleDonors = [];
-        
+
         console.log("\n🔍 Finding eligible donors...");
-        
+
         // Check each MongoDB user
         for (const user of allUsers) {
             const mongoUserId = user._id.toString();
-            
+
             // Skip if this is the requester
             if (mongoUserId === userId.toString()) {
                 console.log(`⏭️  Skipping requester: ${user.username}`);
                 continue;
             }
-            
+
             // Check blood compatibility
             if (!compatibleBloodTypes.includes(user.bloodGroup)) {
                 console.log(`❌ ${user.username}: Blood type ${user.bloodGroup} not compatible with ${BloodType}`);
                 continue;
             }
-            
+
             // Check if user has location in Firebase
-            // IMPORTANT: Firebase ID might be different from MongoDB ID
             let userLocation = null;
-            
+
             // Try direct match first
             if (allFirebaseLocations[mongoUserId]) {
                 userLocation = allFirebaseLocations[mongoUserId];
                 console.log(`✅ ${user.username}: Found location in Firebase with same ID`);
-            } 
-            // If not found, try to find by searching all Firebase entries
-            else {
-                console.log(`⚠️  ${user.username}: No direct match in Firebase. Trying to find by username/phone...`);
-                // You might need to add username/phone mapping in Firebase
             }
-            
+            // Try to find by searching all Firebase entries
+            else {
+                console.log(`⚠️  ${user.username}: No direct match in Firebase.`);
+                continue; // Skip if no location found
+            }
+
             if (!userLocation) {
                 console.log(`❌ ${user.username}: No location found in Firebase`);
                 continue;
             }
-            
+
             // Calculate distance
             const distance = calculateDistance(
                 hospitalCoords.latitude,
@@ -159,9 +173,9 @@ export const notifyNearbyDonors = async (req, res) => {
                 userLocation.latitude,
                 userLocation.longitude
             );
-            
+
             console.log(`📏 ${user.username}: Distance = ${distance.toFixed(2)} km`);
-            
+
             if (distance <= MAX_DISTANCE_KM) {
                 eligibleDonors.push({
                     _id: user._id,
@@ -177,32 +191,45 @@ export const notifyNearbyDonors = async (req, res) => {
                 console.log(`📏 ${user.username}: Too far (${distance.toFixed(2)} km > ${MAX_DISTANCE_KM} km)`);
             }
         }
-        
+
         console.log(`\n📋 ELIGIBLE DONORS FOUND: ${eligibleDonors.length}`);
-        
-        // ========== FIX 4: SEND NOTIFICATIONS ==========
+
+        // ========== SEND NOTIFICATIONS WITH REQUEST ID ==========
         let notificationsSent = 0;
         const failedNotifications = [];
-        
+
         if (eligibleDonors.length > 0) {
-            console.log("\n📤 Sending notifications...");
-            
+            console.log("\n📤 Sending notifications with request ID:", requestId);
+
             for (const donor of eligibleDonors) {
                 try {
+                    // FCM message with requestId
                     const message = {
                         notification: {
-                            title: `🩸 ${BloodType} Blood Needed URGENTLY`,
-                            body: `${unitRequired} unit(s) needed at ${HospitalAddress}. Distance: ${donor.distance}km`,
+                            title: `🩸 ${BloodType} Blood Needed`,
+                            body: `${unitRequired} unit(s) needed at ${HospitalAddress}`,
                         },
                         data: {
-                            type: 'BLOOD_REQUEST_URGENT',
+                            // ESSENTIAL: Send the database _id
+                            requestId: requestId, // This is the MongoDB _id
                             requestBloodType: BloodType,
                             hospitalAddress: HospitalAddress,
-                            hospitalLat: hospitalCoords.latitude.toString(),
-                            hospitalLng: hospitalCoords.longitude.toString(),
                             unitsNeeded: unitRequired.toString(),
                             contactPhone: ContactPhone,
-                            timestamp: Date.now().toString()
+                            distance: donor.distance.toString(),
+
+                            // For React Native handling
+                            type: 'blood_request',
+                            screen: 'BloodRequestDetails',
+                            click_action: 'OPEN_REQUEST_SCREEN',
+                            channelId: 'blood_emergency',
+                            timestamp: Date.now().toString(),
+                            notificationId: `blood_request_${requestId}`,
+
+                            // Extra info for display
+                            title: `${BloodType} Blood Needed Urgently`,
+                            body: `${unitRequired} unit(s) needed. Distance: ${donor.distance}km`,
+                            requesterId: userId.toString()
                         },
                         token: donor.FCMtoken,
                         android: {
@@ -210,7 +237,8 @@ export const notifyNearbyDonors = async (req, res) => {
                             notification: {
                                 sound: 'default',
                                 channelId: 'blood_emergency',
-                                priority: 'max'
+                                priority: 'max',
+                                click_action: 'OPEN_REQUEST_SCREEN'
                             }
                         },
                         apns: {
@@ -218,67 +246,59 @@ export const notifyNearbyDonors = async (req, res) => {
                                 aps: {
                                     alert: {
                                         title: `🩸 ${BloodType} Blood Needed`,
-                                        body: `Emergency request nearby`
+                                        body: `Emergency blood request nearby`
                                     },
                                     sound: 'default',
-                                    badge: 1,
-                                    'mutable-content': 1
-                                }
+                                    badge: 1
+                                },
+                                // For iOS
+                                requestId: requestId,
+                                screen: 'BloodRequestDetails'
                             }
                         }
                     };
-                    
+
                     const response = await admin.messaging().send(message);
                     notificationsSent++;
-                    console.log(`✅ Notification sent to ${donor.username} (${donor.distance}km away)`);
-                    
+                    console.log(`✅ Notification sent to ${donor.username} with requestId: ${requestId}`);
+
                 } catch (error) {
                     console.error(`❌ Failed to send to ${donor.username}:`, error.message);
                     failedNotifications.push({
-                        donor: donor.username,
+                        donorId: donor._id,
+                        donorName: donor.username,
                         error: error.message
                     });
                 }
             }
         }
-        
-        // ========== FIX 5: CREATE REQUEST IN DATABASE ==========
-        const bloodRequest = new RequestBlood({
-            RequestPerson: userId,
-            BloodType,
-            description: description || '',
-            unitRequired: parseInt(unitRequired),
-            ContactPhone,
-            HospitalAddress,
-            location: {
-                type: "Point",
-                coordinates: [hospitalCoords.longitude, hospitalCoords.latitude]
-            },
-            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 48 hours
-            status: 'Looking for Blood',
-            notifiedDonors: eligibleDonors.map(d => d._id),
-            notificationsSent: notificationsSent,
-            failedNotifications: failedNotifications
-        });
-        
+
+        // ========== UPDATE REQUEST WITH NOTIFICATION RESULTS ==========
+        bloodRequest.notifiedDonors = eligibleDonors.map(d => d._id);
+        bloodRequest.notificationsSent = notificationsSent;
+        bloodRequest.failedNotifications = failedNotifications;
         await bloodRequest.save();
-        
-        console.log("\n✅ REQUEST CREATED SUCCESSFULLY!");
-        
+
+        console.log("\n✅ REQUEST CREATED AND NOTIFICATIONS SENT!");
+
         res.status(201).json({
             success: true,
             message: "Blood request created successfully",
             data: {
-                requestId: bloodRequest._id,
+                requestId: requestId,
+                request: {
+                    _id: requestId,
+                    BloodType,
+                    description: description || '',
+                    HospitalAddress,
+                    unitRequired,
+                    ContactPhone,
+                    status: 'Looking for Blood',
+                    createdAt: bloodRequest.createdAt
+                },
                 hospital: {
-                    name: HospitalAddress,
                     coordinates: hospitalCoords,
                     address: HospitalAddress
-                },
-                bloodDetails: {
-                    type: BloodType,
-                    units: unitRequired,
-                    compatibleTypes: compatibleBloodTypes
                 },
                 donors: {
                     totalDonorsInSystem: allUsers.length,
@@ -286,28 +306,23 @@ export const notifyNearbyDonors = async (req, res) => {
                     notificationsSent: notificationsSent,
                     failedNotifications: failedNotifications.length,
                     eligibleDonorsList: eligibleDonors.map(d => ({
+                        id: d._id,
                         username: d.username,
                         bloodGroup: d.bloodGroup,
                         distance: `${d.distance}km`,
                         phone: d.phone || 'Not provided'
                     }))
                 },
-                distanceInfo: {
-                    hospitalCoordinates: `${hospitalCoords.latitude}, ${hospitalCoords.longitude}`,
-                    maxDistance: `${MAX_DISTANCE_KM}km`,
-                    calculation: "Haversine formula used"
-                },
-                nextSteps: [
-                    "Donors have been notified via push notifications",
-                    "Check request status for donor responses",
-                    "Contact donors directly if urgent"
-                ],
-                timestamp: new Date().toISOString()
+                notificationInfo: {
+                    requestIdSentInNotifications: requestId,
+                    compatibleBloodTypes: compatibleBloodTypes,
+                    maxDistanceKm: MAX_DISTANCE_KM
+                }
             }
         });
-        
+
     } catch (error) {
-        console.error("❌ ERROR in createAndNotify:", error);
+        console.error("❌ ERROR in notifyNearbyDonors:", error);
         res.status(500).json({
             success: false,
             error: error.message,
@@ -316,18 +331,17 @@ export const notifyNearbyDonors = async (req, res) => {
     }
 };
 
-
-export const getnotification= async (req, res) => {
+export const getnotification = async (req, res) => {
     try {
         const { requestIds } = req.body;
-        
+
         if (!Array.isArray(requestIds)) {
             return res.status(400).json({
                 success: false,
                 error: "Request IDs must be an array"
             });
         }
-        
+
         // Use aggregation to filter more efficiently
         const requests = await RequestBlood.aggregate([
             {
@@ -371,7 +385,7 @@ export const getnotification= async (req, res) => {
                 }
             }
         ]);
-        
+
         res.status(200).json({
             success: true,
             count: requests.length,
@@ -395,7 +409,7 @@ export const getnotification= async (req, res) => {
                 }
             }))
         });
-        
+
     } catch (error) {
         console.error("Error:", error);
         res.status(500).json({
@@ -404,374 +418,326 @@ export const getnotification= async (req, res) => {
         });
     }
 };
-
 export const AcceptNotification = async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+    const session = await mongoose.startSession();
+    session.startTransaction();
 
-  try {
-    const { userId } = req.params;
-    const { RequestId } = req.body;
-
-    // Validate inputs
-    if (!userId || !RequestId) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({
-        success: false,
-        message: "User ID and Request ID are required"
-      });
-    }
-
-    // Validate ObjectId formats
-    if (!mongoose.Types.ObjectId.isValid(userId) || !mongoose.Types.ObjectId.isValid(RequestId)) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({
-        success: false,
-        message: "Invalid ID format"
-      });
-    }
-
-    // Find the blood request WITH session
-    const bloodRequest = await RequestBlood.findById(RequestId).session(session);
-    
-    if (!bloodRequest) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(404).json({
-        success: false,
-        message: "Blood request not found"
-      });
-    }
-
-    // Check if user is already a donor
-    const isAlreadyDonor = bloodRequest.donations.some(donation => 
-      donation.donor.toString() === userId
-    );
-
-    if (isAlreadyDonor) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({
-        success: false,
-        message: "You have already accepted this donation request"
-      });
-    }
-
-    // Check if self-donation
-    if (bloodRequest.RequestPerson.toString() === userId) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({
-        success: false,
-        message: "Cannot donate to your own request"
-      });
-    }
-
-    // Check if expired
-    if (bloodRequest.isExpired) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({
-        success: false,
-        message: "This blood request has expired"
-      });
-    }
-
-    // Check if already has donor
-    if (bloodRequest.donations && bloodRequest.donations.length > 0) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({
-        success: false,
-        message: "This request already has a donor"
-      });
-    }
-
-    // Check request status
-    if (bloodRequest.status === "Accepted") {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({
-        success: false,
-        message: "This request has already been accepted"
-      });
-    }
-
-    // ====================
-    // UPDATE BLOOD REQUEST
-    // ====================
-    bloodRequest.donations.push({
-      donor: userId,
-      unitsDonated: bloodRequest.unitRequired,
-      donatedAt: new Date()
-    });
-
-    bloodRequest.status = "Accepted";
-    await bloodRequest.save({ session });
-
-    // ====================
-    // CREATE DONATION RECORD
-    // ====================
-    const donation = new Donation({
-      donor: userId,
-      request: RequestId,
-      status: "scheduled",
-      unitsDonated: bloodRequest.unitRequired,
-      donationDate: new Date(),
-      scheduledDate: new Date(Date.now() + 24 * 60 * 60 * 1000), // Tomorrow
-      notes: `Donation for ${bloodRequest.BloodType} blood at ${bloodRequest.HospitalAddress}`
-    });
-
-    // Save donation with session
     try {
-      await donation.save({ session });
-      console.log("✅ Donation created:", donation._id);
-    } catch (donationError) {
-      console.error("❌ Donation save error:", donationError);
-      // Log validation errors if any
-      if (donationError.errors) {
-        Object.keys(donationError.errors).forEach(key => {
-          console.error(`Field ${key}:`, donationError.errors[key].message);
+        const { userId } = req.params;
+        const { RequestId } = req.body;
+
+        // Validate inputs
+        if (!userId || !RequestId) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(400).json({
+                success: false,
+                message: "User ID and Request ID are required"
+            });
+        }
+
+        // Validate ObjectId formats
+        if (!mongoose.Types.ObjectId.isValid(userId) || !mongoose.Types.ObjectId.isValid(RequestId)) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(400).json({
+                success: false,
+                message: "Invalid ID format"
+            });
+        }
+
+        // Find the blood request WITH session
+        const bloodRequest = await RequestBlood.findById(RequestId).session(session);
+
+        if (!bloodRequest) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(404).json({
+                success: false,
+                message: "Blood request not found"
+            });
+        }
+
+        // Check if user is already a donor
+        const isAlreadyDonor = bloodRequest.donations.some(donation =>
+            donation.donor.toString() === userId
+        );
+
+        if (isAlreadyDonor) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(400).json({
+                success: false,
+                message: "You have already accepted this donation request"
+            });
+        }
+
+        // Check if self-donation
+        if (bloodRequest.RequestPerson.toString() === userId) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(400).json({
+                success: false,
+                message: "Cannot donate to your own request"
+            });
+        }
+
+        // Check if expired (add isExpired virtual or check manually)
+        const now = new Date();
+        if (bloodRequest.expiresAt && bloodRequest.expiresAt < now) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(400).json({
+                success: false,
+                message: "This blood request has expired"
+            });
+        }
+
+        // Check if already has donor
+        if (bloodRequest.donations && bloodRequest.donations.length > 0) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(400).json({
+                success: false,
+                message: "This request already has a donor"
+            });
+        }
+
+        // Check request status
+        if (bloodRequest.status === "Accepted") {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(400).json({
+                success: false,
+                message: "This request has already been accepted"
+            });
+        }
+
+        // ====================
+        // UPDATE BLOOD REQUEST
+        // ====================
+        bloodRequest.donations.push({
+            donor: userId,
+            unitsDonated: bloodRequest.unitRequired,
+            donatedAt: new Date()
         });
-      }
-      throw donationError;
-    }
 
-    // ====================
-    // UPDATE DONOR'S LAST DONATION DATE
-    // ====================
-    await User.findByIdAndUpdate(
-      userId,
-      { lastDonationDate: new Date() },
-      { new: true, session }
-    );
+        bloodRequest.status = "Accepted";
+        await bloodRequest.save({ session });
 
-    // ====================
-    // CREATE NOTIFICATION RECORD
-    // ====================
-    let notification;
-    try {
-      notification = await Notification.create([{
-        recipient: bloodRequest.RequestPerson,
-        sender: userId,
-        type: "donation_accepted",
-        title: "Donor Found!",
-        message: `Someone has accepted your blood request for ${bloodRequest.BloodType} type.`,
-        relatedRequest: RequestId,
-        read: false,
-        createdAt: new Date()
-      }], { session });
-      
-      console.log("✅ Notification created:", notification[0]?._id);
-    } catch (notifError) {
-      console.error("⚠️ Notification creation failed:", notifError.message);
-      notification = null;
-    }
+        // ====================
+        // CREATE DONATION RECORD
+        // ====================
+        const donation = new Donation({
+            donor: userId,
+            request: RequestId,
+            status: "scheduled",
+            unitsDonated: bloodRequest.unitRequired,
+            donationDate: new Date(),
+            scheduledDate: new Date(Date.now() + 24 * 60 * 60 * 1000), // Tomorrow
+            notes: `Donation for ${bloodRequest.BloodType} blood at ${bloodRequest.HospitalAddress}`
+        });
 
-    // ====================
-    // COMMIT TRANSACTION
-    // ====================
-    await session.commitTransaction();
-    session.endSession();
+        await donation.save({ session });
+        console.log("✅ Donation created:", donation._id);
 
-    // ====================
-    // SEND FCM PUSH NOTIFICATION
-    // ====================
-    let fcmResult = null;
-    try {
-      // Get the recipient's FCM token from User model
-      const recipientUser = await User.findById(bloodRequest.RequestPerson).select('fcmToken name');
-      
-      if (recipientUser && recipientUser.fcmToken) {
-        console.log("📱 Sending FCM to:", recipientUser.fcmToken);
-        
-        // Prepare FCM message
-        const message = {
-          token: recipientUser.fcmToken,
-          notification: {
-            title: '🎉 Donor Found!',
-            body: `Someone accepted your ${bloodRequest.BloodType} blood request.`,
-            sound: 'default',
-            badge: '1'
-          },
-          data: {
-            type: 'DONATION_ACCEPTED',
-            requestId: RequestId,
-            donorId: userId,
-            bloodType: bloodRequest.BloodType,
-            hospital: bloodRequest.HospitalAddress,
-            screen: 'RequestDetails',
-            click_action: 'FLUTTER_NOTIFICATION_CLICK',
-            timestamp: new Date().toISOString()
-          },
-          android: {
-            priority: 'high',
-            notification: {
-              sound: 'default',
-              channelId: 'donation_alerts',
-              icon: 'notification_icon',
-              color: '#FF0000' // Red color for blood donation
+        // ====================
+        // UPDATE DONOR'S LAST DONATION DATE
+        // ====================
+        await User.findByIdAndUpdate(
+            userId,
+            { lastDonationDate: new Date() },
+            { new: true, session }
+        );
+
+        // ====================
+        // GET REQUESTER INFO FOR NOTIFICATION
+        // ====================
+        const requester = await User.findById(bloodRequest.RequestPerson)
+            .select('FCMtoken username email phone')
+            .session(session);
+
+        // ====================
+        // COMMIT TRANSACTION FIRST
+        // ====================
+        await session.commitTransaction();
+        session.endSession();
+
+        // ====================
+        // SEND FCM PUSH NOTIFICATION TO REQUESTER
+        // ====================
+        let fcmResult = null;
+        let notificationError = null;
+
+        if (requester && requester.FCMtoken) {
+            try {
+                console.log("📱 Sending acceptance notification to requester:", requester.username);
+                console.log("🔑 FCM Token:", requester.FCMtoken.substring(0, 20) + "...");
+
+                // Get donor info for notification
+                const donor = await User.findById(userId).select('username phone bloodGroup');
+
+                // Prepare FCM message for REACT NATIVE
+                const message = {
+                    token: requester.FCMtoken,
+                    notification: {
+                        title: '🎉 Donor Found!',
+                        body: `${donor?.username || 'Someone'} accepted your ${bloodRequest.BloodType} blood request.`
+                        // REMOVE: sound and badge from here
+                    },
+                    data: {
+                        type: 'DONATION_ACCEPTED',
+                        requestId: RequestId,
+                        donorId: userId,
+                        donorName: donor?.username || 'Anonymous',
+                        donorPhone: donor?.phone || '',
+                        donorBloodType: donor?.bloodGroup || '',
+
+                        bloodType: bloodRequest.BloodType,
+                        hospital: bloodRequest.HospitalAddress,
+                        unitsNeeded: bloodRequest.unitRequired.toString(),
+
+                        // For React Native navigation
+                        screen: 'RequestAccepted',
+                        click_action: 'OPEN_REQUEST_ACCEPTED_SCREEN',
+                        channelId: 'donation_alerts',
+                        notificationType: 'donation_accepted',
+                        timestamp: new Date().toISOString()
+                    },
+                    android: {
+                        priority: 'high',
+                        notification: {
+                            sound: 'default', // Sound goes here for Android
+                            channelId: 'donation_alerts',
+                            priority: 'max',
+                            click_action: 'OPEN_REQUEST_ACCEPTED_SCREEN'
+                        }
+                    },
+                    apns: {
+                        payload: {
+                            aps: {
+                                alert: {
+                                    title: '🎉 Donor Found!',
+                                    body: `Donor accepted your ${bloodRequest.BloodType} blood request.`
+                                },
+                                sound: 'default', // Sound goes here for iOS
+                                badge: 1 // Badge goes here for iOS
+                            },
+                            // Extra data for iOS
+                            requestId: RequestId,
+                            donorId: userId,
+                            screen: 'RequestAccepted'
+                        }
+                    }
+                };
+
+                // Send via Firebase Admin SDK
+                fcmResult = await admin.messaging().send(message);
+                console.log('✅ FCM notification sent to requester:', fcmResult);
+
+
+            } catch (fcmError) {
+                console.error('❌ FCM notification failed:', fcmError.message);
+                console.error('FCM error code:', fcmError.code);
+                notificationError = fcmError.message;
+
+                // Still continue, don't fail the whole request
             }
-          },
-          apns: {
-            payload: {
-              aps: {
-                alert: {
-                  title: '🎉 Donor Found!',
-                  body: `Someone accepted your ${bloodRequest.BloodType} blood request.`
+        } else {
+            console.log('⚠️ No FCM token found for requester:', bloodRequest.RequestPerson);
+            notificationError = 'No FCM token for requester';
+        }
+
+        // ====================
+        // POPULATE RESPONSE DATA
+        // ====================
+        const [populatedRequest, populatedDonation, donorInfo] = await Promise.all([
+            RequestBlood.findById(RequestId)
+                .populate('RequestPerson', 'username email phone bloodGroup')
+                .populate('donations.donor', 'username email phone bloodGroup'),
+            Donation.findById(donation._id)
+                .populate('donor', 'username email phone bloodGroup')
+                .populate('request', 'BloodType HospitalAddress unitRequired'),
+            User.findById(userId).select('username email phone bloodGroup')
+        ]);
+
+        // ====================
+        // RETURN SUCCESS RESPONSE
+        // ====================
+        return res.status(200).json({
+            success: true,
+            message: "Successfully accepted as donor",
+            data: {
+                request: {
+                    id: populatedRequest._id,
+                    bloodType: populatedRequest.BloodType,
+                    hospitalAddress: populatedRequest.HospitalAddress,
+                    unitRequired: populatedRequest.unitRequired,
+                    status: populatedRequest.status,
+                    requester: {
+                        id: populatedRequest.RequestPerson._id,
+                        username: populatedRequest.RequestPerson.username,
+                        email: populatedRequest.RequestPerson.email,
+                        phone: populatedRequest.RequestPerson.phone
+                    },
+                    donor: donorInfo,
+                    expiresAt: populatedRequest.expiresAt,
+                    createdAt: populatedRequest.createdAt
                 },
-                sound: 'default',
-                badge: 1,
-                category: 'DONATION_CATEGORY'
-              }
+                donation: {
+                    id: populatedDonation._id,
+                    status: populatedDonation.status,
+                    unitsDonated: populatedDonation.unitsDonated,
+                    scheduledDate: populatedDonation.scheduledDate,
+                    donationDate: populatedDonation.donationDate,
+                    donor: populatedDonation.donor,
+                    request: populatedDonation.request
+                },
+                notification: {
+                    sentToRequester: requester ? true : false,
+                    fcmSent: fcmResult ? true : false,
+                    fcmMessageId: fcmResult || null,
+                    error: notificationError || null
+                }
             }
-          }
-        };
-
-        // Send via Firebase Admin SDK
-        fcmResult = await admin.messaging().send(message);
-        console.log('✅ FCM notification sent:', fcmResult);
-        
-        // Update notification record with FCM status
-        if (notification && notification[0]) {
-          await Notification.findByIdAndUpdate(notification[0]._id, {
-            fcmSent: true,
-            fcmMessageId: fcmResult,
-            fcmSentAt: new Date()
-          });
-        }
-        
-        // Optional: Also save to Firebase Realtime Database
-        if (db) {
-          const notificationRef = db.ref(`notifications/${bloodRequest.RequestPerson}/${Date.now()}`);
-          await notificationRef.set({
-            title: 'Donor Found!',
-            body: `Someone accepted your ${bloodRequest.BloodType} blood request.`,
-            requestId: RequestId,
-            donorId: userId,
-            type: 'donation_accepted',
-            read: false,
-            timestamp: new Date().toISOString()
-          });
-          console.log('✅ Notification saved to Firebase Realtime DB');
-        }
-      } else {
-        console.log('⚠️ No FCM token found for recipient:', bloodRequest.RequestPerson);
-      }
-    } catch (fcmError) {
-      console.error('❌ FCM notification failed:', fcmError.message);
-      console.error('FCM error code:', fcmError.code);
-      console.error('FCM error details:', fcmError.details);
-      
-      // Update notification record with error
-      if (notification && notification[0]) {
-        await Notification.findByIdAndUpdate(notification[0]._id, {
-          fcmSent: false,
-          fcmError: fcmError.message,
-          fcmErrorCode: fcmError.code
         });
-      }
-      
-      // Don't fail the main request if FCM fails
-    }
 
-    // ====================
-    // POPULATE RESPONSE DATA
-    // ====================
-    // Use Promise.all for parallel population
-    const [populatedRequest, populatedDonation, donorInfo, requesterInfo] = await Promise.all([
-      RequestBlood.findById(RequestId)
-        .populate('RequestPerson', 'name email phone')
-        .populate('donations.donor', 'name email bloodType'),
-      Donation.findById(donation._id)
-        .populate('donor', 'name email bloodType')
-        .populate('request', 'BloodType HospitalAddress'),
-      User.findById(userId).select('name email phone bloodType'),
-      User.findById(bloodRequest.RequestPerson).select('name email phone')
-    ]);
+    } catch (error) {
+        // ====================
+        // ERROR HANDLING
+        // ====================
+        await session.abortTransaction();
+        session.endSession();
 
-    // ====================
-    // RETURN SUCCESS RESPONSE
-    // ====================
-    return res.status(200).json({
-      success: true,
-      message: "Successfully accepted as donor",
-      data: {
-        request: {
-          id: populatedRequest._id,
-          bloodType: populatedRequest.BloodType,
-          hospitalAddress: populatedRequest.HospitalAddress,
-          unitRequired: populatedRequest.unitRequired,
-          status: populatedRequest.status,
-          requester: requesterInfo,
-          donor: donorInfo,
-          expiresAt: populatedRequest.expiresAt,
-          createdAt: populatedRequest.createdAt
-        },
-        donation: {
-          id: populatedDonation._id,
-          status: populatedDonation.status,
-          unitsDonated: populatedDonation.unitsDonated,
-          scheduledDate: populatedDonation.scheduledDate,
-          donationDate: populatedDonation.donationDate,
-          donor: populatedDonation.donor,
-          request: populatedDonation.request
-        },
-        notification: {
-          sent: notification ? true : false,
-          fcmSent: fcmResult ? true : false,
-          fcmMessageId: fcmResult || null
+        console.error("❌ Error in AcceptNotification:", error);
+
+        // Handle specific Mongoose errors
+        if (error.name === 'CastError') {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid ID format",
+                details: error.message
+            });
         }
-      }
-    });
 
-  } catch (error) {
-    // ====================
-    // ERROR HANDLING
-    // ====================
-    await session.abortTransaction();
-    session.endSession();
-    
-    console.error("❌ Error in AcceptNotification:", error);
-    
-    // Handle specific Mongoose errors
-    if (error.name === 'CastError') {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid ID format",
-        details: error.message
-      });
+        if (error.name === 'ValidationError') {
+            const errors = {};
+            Object.keys(error.errors).forEach(key => {
+                errors[key] = error.errors[key].message;
+            });
+
+            return res.status(400).json({
+                success: false,
+                message: "Validation failed",
+                errors: errors
+            });
+        }
+
+        // Generic server error
+        return res.status(500).json({
+            success: false,
+            message: "Server error while accepting donation",
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
     }
-    
-    if (error.name === 'ValidationError') {
-      const errors = {};
-      Object.keys(error.errors).forEach(key => {
-        errors[key] = error.errors[key].message;
-      });
-      
-      return res.status(400).json({
-        success: false,
-        message: "Validation failed",
-        errors: errors
-      });
-    }
-    
-    // Handle duplicate key errors
-    if (error.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: "Duplicate entry",
-        field: Object.keys(error.keyPattern)[0]
-      });
-    }
-    
-    // Generic server error
-    return res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
 };

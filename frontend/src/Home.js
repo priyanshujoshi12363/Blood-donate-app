@@ -15,11 +15,7 @@ import {
 import { Ionicons, MaterialIcons, FontAwesome5 } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import fcmService from "../fcmService";
-
-
-
-
+import fcmServiceInstance from "../fcmService";
 // AsyncStorage keys
 const STORAGE_KEYS = {
   TOKEN: '@auth_token',
@@ -89,15 +85,83 @@ export default function Home({ navigation }) {
   const [isFetchingData, setIsFetchingData] = useState(false);
   const [nextUpdateDate, setNextUpdateDate] = useState('');
   const [isUpdatingDonor, setIsUpdatingDonor] = useState(false);
+  const [fcmStatus, setFcmStatus] = useState({ 
+    sent: false, 
+    loading: false, 
+    message: '' 
+  });
   const { width, height } = useWindowDimensions();
   const isSmallScreen = width < 375;
 
+  // ==================== FCM AUTOMATIC INITIALIZATION ====================
+  useEffect(() => {
+    const initializeFCM = async () => {
+      try {
+        console.log('🚀 Home mounted - initializing FCM...');
+        setFcmStatus(prev => ({ ...prev, loading: true }));
+        
+        // Wait for user data to load first
+        const userStr = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
+        if (!userStr) {
+          console.log('⏳ Waiting for user data...');
+          setTimeout(initializeFCM, 1000); // Retry in 1 second
+          return;
+        }
+        
+        const userData = JSON.parse(userStr);
+        const userId = userData._id || userData.id;
+        
+        if (!userId) {
+          console.log('❌ No user ID found');
+          setFcmStatus({ sent: false, loading: false, message: 'No user ID' });
+          return;
+        }
+        
+        console.log('✅ User ID found:', userId);
+        
+        // Initialize FCM for this user
+        const result = await fcmServiceInstance.initializeForUser(userId);
+        
+        if (result.success) {
+          if (result.alreadySent) {
+            console.log('📱 FCM token already sent for this user');
+            setFcmStatus({ 
+              sent: true, 
+              loading: false, 
+              message: 'Token already registered' 
+            });
+          } else {
+            console.log('🎯 FCM token sent successfully!');
+            setFcmStatus({ 
+              sent: true, 
+              loading: false, 
+              message: 'Token sent successfully' 
+            });
+          }
+        } else {
+          console.log('❌ FCM initialization failed:', result.error);
+          setFcmStatus({ 
+            sent: false, 
+            loading: false, 
+            message: result.error || 'Failed to send token' 
+          });
+        }
+        
+      } catch (error) {
+        console.error('💥 FCM initialization error:', error);
+        setFcmStatus({ 
+          sent: false, 
+          loading: false, 
+          message: error.message 
+        });
+      }
+    };
+    
+    // Start FCM initialization
+    initializeFCM();
+  }, []);
+
   // Fetch live user data from API
-
-
-useEffect(() => {
-  fcmService.init();
-}, []);
   const fetchLiveUserData = async () => {
     try {
       setIsFetchingData(true);
@@ -345,6 +409,52 @@ useEffect(() => {
     await loadUserData(true);
   };
 
+  // FCM Token Resend Function
+  const handleResendFCMToken = async () => {
+    setMenuOpen(false);
+    
+    if (!userData) {
+      Alert.alert("Error", "User not logged in");
+      return;
+    }
+    
+    const userId = userData._id || userData.id;
+    
+    Alert.alert(
+      "Resend FCM Token",
+      "Force resend push notification token?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Resend",
+          onPress: async () => {
+            setFcmStatus(prev => ({ ...prev, loading: true }));
+            
+            // Reset and resend
+            await fcmServiceInstance.resetFCMData();
+            const result = await fcmServiceInstance.initializeForUser(userId);
+            
+            if (result.success) {
+              Alert.alert("Success", "FCM token resent successfully!");
+              setFcmStatus({ 
+                sent: true, 
+                loading: false, 
+                message: 'Token resent successfully' 
+              });
+            } else {
+              Alert.alert("Error", result.error || "Failed to resend token");
+              setFcmStatus({ 
+                sent: false, 
+                loading: false, 
+                message: result.error || 'Failed' 
+              });
+            }
+          }
+        }
+      ]
+    );
+  };
+
   // Load user data on component mount
   useEffect(() => {
     loadUserData();
@@ -459,6 +569,9 @@ useEffect(() => {
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#d32f2f" />
         <Text style={styles.loadingText}>Loading your profile...</Text>
+        {fcmStatus.loading && (
+          <Text style={styles.fcmLoadingText}>Setting up notifications...</Text>
+        )}
       </View>
     );
   }
@@ -487,8 +600,60 @@ useEffect(() => {
           {/* THREE DOT MENU */}
           {menuOpen && (
             <View style={[styles.menuBox, { top: height * 0.08 }]}>
-        
-
+              {/* Refresh Data */}
+              <TouchableOpacity 
+                style={styles.menuItem}
+                onPress={handleRefreshData}
+              >
+                <Ionicons name="refresh-outline" size={iconSize.small} color="#1976d2" />
+                <Text style={[styles.menuText, { fontSize: responsiveFont.medium }]}>
+                  Refresh Data
+                </Text>
+              </TouchableOpacity>
+              
+              {/* Update Donor Status */}
+              <TouchableOpacity 
+                style={styles.menuItem}
+                onPress={handleForceUpdateDonor}
+                disabled={isUpdatingDonor}
+              >
+                {isUpdatingDonor ? (
+                  <ActivityIndicator size="small" color="#4CAF50" />
+                ) : (
+                  <FontAwesome5 name="hand-holding-heart" size={iconSize.small} color="#4CAF50" />
+                )}
+                <Text style={[styles.menuText, { fontSize: responsiveFont.medium }]}>
+                  {isUpdatingDonor ? 'Updating...' : 'Update Donor Status'}
+                </Text>
+              </TouchableOpacity>
+              
+              {/* FCM Token Resend */}
+              <TouchableOpacity 
+                style={styles.menuItem}
+                onPress={handleResendFCMToken}
+                disabled={fcmStatus.loading}
+              >
+                {fcmStatus.loading ? (
+                  <ActivityIndicator size="small" color="#FF9800" />
+                ) : (
+                  <Ionicons name="notifications-outline" size={iconSize.small} color="#FF9800" />
+                )}
+                <Text style={[styles.menuText, { fontSize: responsiveFont.medium }]}>
+                  {fcmStatus.loading ? 'Processing...' : 'Resend FCM Token'}
+                </Text>
+              </TouchableOpacity>
+              
+              {/* FCM Status Indicator */}
+              <View style={styles.fcmStatusItem}>
+                <Ionicons 
+                  name={fcmStatus.sent ? "checkmark-circle" : "close-circle"} 
+                  size={iconSize.small} 
+                  color={fcmStatus.sent ? "#4CAF50" : "#f44336"} 
+                />
+                <Text style={[styles.fcmStatusText, { fontSize: responsiveFont.small }]}>
+                  Notifications: {fcmStatus.sent ? 'Active' : 'Inactive'}
+                </Text>
+              </View>
               
               {/* Logout Button */}
               <TouchableOpacity 
@@ -591,6 +756,32 @@ useEffect(() => {
                     {getDonorStatusText()}
                   </Text>
                 </View>
+                
+                {/* FCM STATUS */}
+                <View style={styles.fcmStatusRow}>
+                  <Text style={[styles.fcmStatusLabel, { fontSize: responsiveFont.small - 1 }]}>
+                    Notifications:
+                  </Text>
+                  <View style={styles.fcmStatusIndicator}>
+                    <View style={[
+                      styles.fcmStatusDot, 
+                      { backgroundColor: fcmStatus.sent ? '#4CAF50' : '#f44336' }
+                    ]} />
+                    <Text style={[
+                      styles.fcmStatusValue, 
+                      { fontSize: responsiveFont.small - 1 },
+                      fcmStatus.sent ? styles.fcmActive : styles.fcmInactive
+                    ]}>
+                      {fcmStatus.sent ? 'Active' : 'Setup Required'}
+                    </Text>
+                  </View>
+                </View>
+                
+                {fcmStatus.message && (
+                  <Text style={[styles.fcmMessage, { fontSize: responsiveFont.small - 2 }]}>
+                    {fcmStatus.message}
+                  </Text>
+                )}
                 
                 <Text style={[styles.dataSourceText, { fontSize: responsiveFont.small - 1 }]}>
                   📡 Live data from server
@@ -787,7 +978,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderRadius: 12,
     paddingVertical: 8,
-    width: 160,
+    width: 200,
     elevation: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },

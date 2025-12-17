@@ -13,7 +13,14 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.priyanshu0ko.RapidDonor",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
+      "infoPlist": {
+        "UIBackgroundModes": ["remote-notification"]
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -21,8 +28,30 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.priyanshu0ko.RapidDonor"
+      "package": "com.priyanshu0ko.RapidDonor",
+      "googleServicesFile": "./google-services.json",
+      "permissions": [
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "WAKE_LOCK"
+      ]
     },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/main.jpeg",
+          "color": "#d32f2f",
+          "sounds": [
+            "./assets/notification.wav",
+            "./assets/notification.mp3"
+          ],
+          "defaultChannel": "default",
+          "mode": "production"
+        }
+      ],
+      "expo-dev-client"
+    ],
     "web": {
       "favicon": "./assets/favicon.png"
     },
