@@ -255,7 +255,7 @@ export const notifyNearbyDonors = async (req, res) => {
                 coordinates: [hospitalCoords.longitude, hospitalCoords.latitude]
             },
             expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 48 hours
-            status: 'active',
+            status: 'Looking for Blood',
             notifiedDonors: eligibleDonors.map(d => d._id),
             notificationsSent: notificationsSent,
             failedNotifications: failedNotifications

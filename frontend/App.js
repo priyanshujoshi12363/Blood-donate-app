@@ -8,6 +8,7 @@ import Login from './src/Login';
 import Register from './src/Register';
 import BottomTabNavigator from './src/BottomNv/BottomNav';
 import Request from './src/Request/Request';
+import ChatScreen from './src/Chat/ChatScreen';
 const Stack = createNativeStackNavigator();
 
 export default function App() {
@@ -55,6 +56,7 @@ export default function App() {
             <Stack.Screen name="Register" component={Register} />
             <Stack.Screen name="Main" component={BottomTabNavigator} />
             <Stack.Screen name='Request' component={Request}/>
+            <Stack.Screen name='ChatScreen' component={ChatScreen}/>
           </Stack.Navigator>
         </NavigationContainer>
       </View>

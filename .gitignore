@@ -11,3 +11,6 @@ key.json
 *.expo
 dist/
 build/
+
+
+frontend/google-services.json
